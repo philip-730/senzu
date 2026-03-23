@@ -31,8 +31,18 @@ Senzu fixes this:
 
 ## Install
 
+Senzu isn't on PyPI yet. Install directly from GitHub:
+
 ```bash
-pip install senzu
+pip install git+https://github.com/philip-730/senzu
+# or
+uv add git+https://github.com/philip-730/senzu
+```
+
+Pin to a specific commit or tag if you need stability:
+
+```bash
+pip install git+https://github.com/philip-730/senzu@v0.1.0
 ```
 
 Requires Python 3.10+. You'll need GCP credentials set up — either `gcloud auth application-default login` locally or a service account in prod.
@@ -145,3 +155,46 @@ gcloud auth application-default login
 ```
 
 In CI/CD or Cloud Run, use a service account with `Secret Manager Secret Accessor` role on the relevant secrets.
+
+---
+
+## Development
+
+### With Nix (recommended)
+
+The repo uses [uv2nix](https://github.com/pyproject-nix/uv2nix) to provide a fully reproducible dev environment. Dependencies are pinned in `uv.lock`.
+
+```bash
+nix develop
+```
+
+This drops you into a shell with the right Python version, all deps installed, and senzu itself available as an editable install — changes to the source are reflected immediately without reinstalling. `gcloud` is also available.
+
+To run the CLI directly without entering a shell:
+
+```bash
+nix run
+```
+
+### Without Nix
+
+```bash
+uv sync
+uv run senzu --help
+```
+
+Or with a standard virtualenv:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+```
+
+### Running tests
+
+```bash
+pytest
+# or inside nix develop:
+pytest tests/
+```
