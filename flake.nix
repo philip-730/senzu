@@ -51,7 +51,20 @@
         editableOverlay = workspace.mkEditablePyprojectOverlay {
           root = "$REPO_ROOT";
         };
-        editablePythonSet = pythonSet.overrideScope editableOverlay;
+        editablePythonSet = pythonSet.overrideScope (
+          lib.composeManyExtensions [
+            editableOverlay
+            # Hatchling needs the `editables` package at build time for editable
+            # installs. uv doesn't lock build-system deps so we wire it in here.
+            (final: prev: {
+              senzu = prev.senzu.overrideAttrs (old: {
+                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+                  final.editables
+                ];
+              });
+            })
+          ]
+        );
 
         # Dev virtualenv: all deps including dev extras, senzu editable
         devEnv = editablePythonSet.mkVirtualEnv "senzu-dev-env" workspace.deps.all;
@@ -77,7 +90,8 @@
             # Stop uv from trying to manage the venv — we already have one
             UV_NO_SYNC = "1";
             # Point uv at the Nix-managed Python so it doesn't download its own
-            UV_PYTHON = "${python}/bin/python";
+            UV_PYTHON = editablePythonSet.python.interpreter;
+            UV_PYTHON_DOWNLOADS = "never";
           };
 
           shellHook = ''
