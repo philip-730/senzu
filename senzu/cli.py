@@ -347,7 +347,7 @@ secrets = [
 
     # Update .gitignore
     gitignore = Path(".gitignore")
-    additions = [".env.*", ".senzu.lock"]
+    additions = [".env.*"]
     existing = gitignore.read_text() if gitignore.exists() else ""
     lines_to_add = [line for line in additions if line not in existing]
     if lines_to_add:
