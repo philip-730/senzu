@@ -68,6 +68,21 @@
 
         # Dev virtualenv: all deps including dev extras, senzu editable
         devEnv = editablePythonSet.mkVirtualEnv "senzu-dev-env" workspace.deps.all;
+
+        # Shared config for both dev shells
+        shellEnv = {
+          # Stop uv from trying to manage the venv — we already have one
+          UV_NO_SYNC = "1";
+          # Point uv at the Nix-managed Python so it doesn't download its own
+          UV_PYTHON = editablePythonSet.python.interpreter;
+          UV_PYTHON_DOWNLOADS = "never";
+        };
+        shellHookScript = ''
+          unset PYTHONPATH
+          export REPO_ROOT=$(git rev-parse --show-toplevel)
+          echo "Senzu dev shell ready. senzu is installed in editable mode."
+        '';
+        basePackages = [ devEnv pkgs.uv ];
       in
       {
         # Frozen distributable package — usable by Nix users who want to
@@ -79,26 +94,22 @@
           program = "${senzuEnv}/bin/senzu";
         };
 
-        devShells.default = pkgs.mkShell {
-          packages = [
-            devEnv
-            pkgs.uv
-            pkgs.google-cloud-sdk
-          ];
-
-          env = {
-            # Stop uv from trying to manage the venv — we already have one
-            UV_NO_SYNC = "1";
-            # Point uv at the Nix-managed Python so it doesn't download its own
-            UV_PYTHON = editablePythonSet.python.interpreter;
-            UV_PYTHON_DOWNLOADS = "never";
+        devShells = {
+          # Default: no nix-managed gcloud. If gcloud is already installed on
+          # the host it remains available via the inherited PATH.
+          default = pkgs.mkShell {
+            packages = basePackages;
+            env = shellEnv;
+            shellHook = shellHookScript;
           };
 
-          shellHook = ''
-            unset PYTHONPATH
-            export REPO_ROOT=$(git rev-parse --show-toplevel)
-            echo "Senzu dev shell ready. senzu is installed in editable mode."
-          '';
+          # For fresh machines or CI that don't have gcloud pre-installed.
+          # Usage: nix develop .#with-gcloud
+          with-gcloud = pkgs.mkShell {
+            packages = basePackages ++ [ pkgs.google-cloud-sdk ];
+            env = shellEnv;
+            shellHook = shellHookScript;
+          };
         };
       }
     );
