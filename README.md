@@ -14,8 +14,7 @@ Senzu fixes this:
 
 - **`senzu pull`** — dumps all your configured secrets into a local `.env` file in one command. Handles JSON and dotenv formats automatically. Works across multiple secrets per environment. Done.
 
-- **`senzu push`** — pushes local changes back to Secret Manager. But here's the thing: it actually checks if someone else changed the remote since you last pulled. If they did, it blocks you. No more "oops I just overwrote Josh's database password."
-
+- **`senzu push`** — pushes local changes back to Secret Manager. But here's the thing: it actually checks if someone else changed the remote since you last pulled. If they did, it blocks you.
 - **`senzu diff`** — see exactly what's different between your local file and what's in Secret Manager, without touching anything. Pipe it into CI, use it in code review, whatever.
 
 - **Lock file** — after a pull, Senzu writes `.senzu.lock` which tracks which key came from which secret and which project. This is what makes push safe. It knows exactly where to send each key back, even if you're pulling from 5 different secrets into one `.env`.
@@ -48,7 +47,7 @@ Run the init wizard in your project root:
 senzu init
 ```
 
-This creates `senzu.toml` and updates `.gitignore` to exclude your `.env.*` files and the lock file. You don't want those committed.
+This creates `senzu.toml` and updates `.gitignore` to exclude your `.env.*` files. You don't want those committed.
 
 Or write `senzu.toml` yourself:
 
@@ -133,7 +132,7 @@ Senzu reads `ENV` or `SENZU_ENV` to figure out which environment you're in, find
 
 ## The lock file
 
-After `senzu pull`, you'll have a `.senzu.lock` file. This is how Senzu knows which of your 40 env vars came from which of your 5 secrets. Don't delete it — push won't work without it. Don't commit it — it has project and secret names in it. It's in your `.gitignore` after `senzu init`.
+After `senzu pull`, you'll have a `.senzu.lock` file. This is how Senzu knows which of your 40 env vars came from which of your 5 secrets. Don't delete it — push won't work without it. Commit it — it contains no secret values, just routing metadata (which key lives in which secret), and your teammates need it to push without doing a redundant pull first.
 
 ---
 
