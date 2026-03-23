@@ -54,6 +54,25 @@ def push_secret_version(project: str, secret_name: str, payload: bytes) -> None:
         ) from exc
 
 
+def ensure_secret_exists(project: str, secret_name: str) -> None:
+    """Create the secret resource if it doesn't already exist."""
+    try:
+        client = _get_secret_client()
+        client.create_secret(
+            request={
+                "parent": f"projects/{project}",
+                "secret_id": secret_name,
+                "secret": {"replication": {"automatic": {}}},
+            }
+        )
+    except Exception as exc:
+        if "already exists" in str(exc).lower() or "409" in str(exc):
+            return
+        raise SecretPushError(
+            f"Failed to create secret '{secret_name}' in project '{project}': {exc}"
+        ) from exc
+
+
 # ---------------------------------------------------------------------------
 # Format detection & parsing
 # ---------------------------------------------------------------------------
