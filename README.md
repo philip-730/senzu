@@ -1,6 +1,6 @@
 # senzu
 
-Stop manually copy-pasting secrets from GCP Secret Manager into `.env` files like an animal. Senzu does it for you, tracks where every key came from, and won't let you blow up production by pushing stale local changes over remote ones.
+Stop manually copy-pasting secrets from GCP Secret Manager into `.env` files like an animal. Senzu syncs secrets between GCP Secret Manager and local `.env` files, tracks where every key came from, and won't let you blow up production by pushing stale local changes over remote ones.
 
 It's a CLI + Python library for teams using GCP Secret Manager who need their secrets to actually stay in sync — across multiple environments, multiple secrets, multiple people.
 
@@ -19,6 +19,8 @@ Senzu fixes this:
 - **`senzu diff`** — see exactly what's different between your local file and what's in Secret Manager, without touching anything. Pipe it into CI, use it in code review, whatever.
 
 - **Lock file** — after a pull, Senzu writes `.senzu.lock` which tracks which key came from which secret and which project. This is what makes push safe. It knows exactly where to send each key back, even if you're pulling from 5 different secrets into one `.env`.
+
+- **`senzu import`** — already have a `.env` file and want to get into Secret Manager without touching the GCP console? `senzu import dev --from .env` creates the secret if it doesn't exist, pushes the keys, and writes the lock file so you're immediately ready to pull/push. If the secret already has data, it merges — your local keys win.
 
 - **Multiple environments** — `dev`, `staging`, `prod`, whatever you want. Each one can have its own GCP project, its own secrets, its own local file. `senzu pull dev` or `senzu pull prod`, no config flags needed.
 
@@ -80,6 +82,12 @@ secrets = [
 ## Usage
 
 ```bash
+# Bootstrap — import an existing .env into Secret Manager for the first time
+senzu import dev --from .env
+senzu import dev --from .env --secret app-env          # required if multiple secrets configured
+senzu import dev --from .env --keys DB_URL,DB_PASSWORD # specific keys only
+senzu import dev --from .env --format json             # write as JSON instead of dotenv
+
 # Pull all environments
 senzu pull
 
