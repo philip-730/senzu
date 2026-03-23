@@ -47,7 +47,7 @@ class SenzuSettings(BaseSettings):
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
-        secrets_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         # If SENZU_USE_SECRET_MANAGER is set, inject a Secret Manager source.
         if os.environ.get("SENZU_USE_SECRET_MANAGER", "").lower() in ("1", "true", "yes"):
