@@ -63,21 +63,9 @@ class SenzuSettings(BaseSettings):
         env_name = cls._senzu_env or _detect_env()
         env_file = _resolve_env_file(env_name)
 
-        # Rebuild dotenv_settings with the resolved file
-        from pydantic_settings import EnvSettingsSource
+        from pydantic_settings import DotEnvSettingsSource
 
-        class _DotEnv(PydanticBaseSettingsSource):
-            def get_field_value(self, field, field_name):  # type: ignore[override]
-                return None, field_name, False
-
-            def __call__(self) -> dict[str, Any]:
-                if env_file and Path(env_file).exists():
-                    from dotenv import dotenv_values
-
-                    return {k: v for k, v in dotenv_values(env_file).items() if v is not None}
-                return {}
-
-        return (init_settings, env_settings, _DotEnv(settings_cls))
+        return (init_settings, env_settings, DotEnvSettingsSource(settings_cls, env_file=env_file))
 
     @model_validator(mode="before")
     @classmethod
