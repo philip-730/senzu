@@ -43,4 +43,4 @@ class SecretManagerSettingsSource(PydanticBaseSettingsSource):
             kv = parse_secret(raw, fmt, secret_ref)
             merged.update(kv)
 
-        return merged
+        return {k.lower(): v for k, v in merged.items()}
