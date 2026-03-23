@@ -13,14 +13,18 @@ from rich import print as rprint
 from .config import load_config, find_config_root
 from .core import (
     DiffResult,
-    diff_env,
-    fetch_secret_latest,
+    SecretFormat,
     detect_format,
+    diff_env,
+    ensure_secret_exists,
+    fetch_secret_latest,
     generate_settings_source,
     parse_secret,
     pull_env,
     push_env,
+    push_secret_version,
     read_env_file,
+    serialize_secret,
     write_env_file,
 )
 from .exceptions import (
@@ -30,7 +34,7 @@ from .exceptions import (
     RemoteDriftError,
     SenzuError,
 )
-from .lock import LockData, load_lock, save_lock
+from .lock import LockData, LockEntry, load_lock, save_lock
 
 app = typer.Typer(
     name="senzu",
@@ -399,6 +403,139 @@ def generate(
     console.print(
         f"Generated [cyan]{out}[/cyan] — review before committing."
     )
+
+
+# ---------------------------------------------------------------------------
+# import
+# ---------------------------------------------------------------------------
+
+
+@app.command("import")
+def import_cmd(
+    env: str = typer.Argument(..., help="Env name (e.g. dev, prod)."),
+    from_file: Optional[str] = typer.Option(None, "--from", help="Source .env file. Defaults to the file configured for this env."),
+    secret: Optional[str] = typer.Option(None, "--secret", "-s", help="Target secret name from senzu.toml. Required if multiple secrets configured."),
+    keys: Optional[str] = typer.Option(None, "--keys", "-k", help="Comma-separated keys to import. Omit for all."),
+    fmt: Optional[str] = typer.Option(None, "--format", help="Secret format: json or dotenv. Defaults to dotenv."),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt."),
+) -> None:
+    """Import a local .env file into Secret Manager and write the lock file."""
+    root = _root()
+    cfg = _cfg(root)
+
+    env_cfg = cfg.envs.get(env)
+    if env_cfg is None:
+        err_console.print(f"[red]Error:[/red] Unknown env '{env}'.")
+        raise typer.Exit(1)
+
+    # Resolve source file
+    source_path = Path(from_file) if from_file else root / env_cfg.file
+    if not source_path.exists():
+        err_console.print(f"[red]Error:[/red] Source file '{source_path}' not found.")
+        raise typer.Exit(1)
+
+    source_kv = read_env_file(source_path)
+    if not source_kv:
+        err_console.print(f"[yellow]Warning:[/yellow] '{source_path}' is empty.")
+        raise typer.Exit(0)
+
+    # Filter keys if specified
+    if keys:
+        requested = [k.strip() for k in keys.split(",")]
+        missing = [k for k in requested if k not in source_kv]
+        if missing:
+            err_console.print(f"[red]Error:[/red] Keys not in source file: {', '.join(missing)}")
+            raise typer.Exit(1)
+        source_kv = {k: source_kv[k] for k in requested}
+
+    # Resolve target secret ref
+    if not env_cfg.secrets:
+        err_console.print(f"[red]Error:[/red] No secrets configured for env '{env}' in senzu.toml.")
+        raise typer.Exit(1)
+
+    if secret:
+        secret_ref = next((s for s in env_cfg.secrets if s.secret == secret), None)
+        if secret_ref is None:
+            configured = ", ".join(s.secret for s in env_cfg.secrets)
+            err_console.print(
+                f"[red]Error:[/red] Secret '{secret}' not in senzu.toml for env '{env}'. "
+                f"Configured: {configured}"
+            )
+            raise typer.Exit(1)
+    elif len(env_cfg.secrets) == 1:
+        secret_ref = env_cfg.secrets[0]
+    else:
+        configured = ", ".join(s.secret for s in env_cfg.secrets)
+        err_console.print(
+            f"[red]Error:[/red] Multiple secrets configured for env '{env}'. "
+            f"Specify one with --secret. Options: {configured}"
+        )
+        raise typer.Exit(1)
+
+    # Resolve format
+    resolved_fmt: SecretFormat = fmt or secret_ref.format or "dotenv"  # type: ignore[assignment]
+    if resolved_fmt not in ("json", "dotenv"):
+        err_console.print(f"[red]Error:[/red] Unknown format '{resolved_fmt}'. Use 'json' or 'dotenv'.")
+        raise typer.Exit(1)
+
+    # Try to fetch existing remote and merge (imported keys win)
+    merged_kv: dict[str, str] = dict(source_kv)
+    has_remote = False
+    try:
+        raw_remote = fetch_secret_latest(secret_ref.project, secret_ref.secret)
+        remote_fmt = detect_format(raw_remote, secret_ref.format)
+        remote_kv = parse_secret(raw_remote, remote_fmt, secret_ref)
+        merged_kv = {**remote_kv, **source_kv}
+        has_remote = True
+    except SenzuError:
+        pass  # secret doesn't exist or has no versions — fresh import
+
+    # Show summary
+    console.print(f"\nImporting [bold]{len(source_kv)}[/bold] keys from [cyan]{source_path}[/cyan]")
+    console.print(f"  → [cyan]{secret_ref.secret}[/cyan]  (project: {secret_ref.project}, format: {resolved_fmt})")
+    if has_remote:
+        console.print(f"  [dim]Merging with existing remote — imported keys take precedence.[/dim]")
+    for key in sorted(source_kv):
+        console.print(f"    [green]+[/green] {key}")
+
+    if not force:
+        console.print(
+            f"\nThis will create a new version of [cyan]{secret_ref.secret}[/cyan]. Proceed? [y/N] ",
+            end="",
+        )
+        answer = input().strip().lower()
+        if answer != "y":
+            console.print("Aborted.")
+            raise typer.Exit(0)
+
+    try:
+        ensure_secret_exists(secret_ref.project, secret_ref.secret)
+        payload = serialize_secret(merged_kv, resolved_fmt)
+        push_secret_version(secret_ref.project, secret_ref.secret, payload)
+    except SenzuError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    # Update lock file
+    lock_data: LockData = {}
+    try:
+        lock_data = load_lock(root)
+    except LockNotFoundError:
+        pass
+
+    env_lock = lock_data.get(env, {})
+    for key in source_kv:
+        env_lock[key] = LockEntry(
+            secret=secret_ref.secret,
+            project=secret_ref.project,
+            format=resolved_fmt,
+            type=secret_ref.type,
+        )
+    lock_data[env] = env_lock
+    save_lock(root, lock_data)
+
+    console.print(f"\n  Pushed [bold]{len(source_kv)}[/bold] keys to [cyan]{secret_ref.secret}[/cyan].")
+    console.print(f"  Lock file updated: [cyan].senzu.lock[/cyan]")
 
 
 if __name__ == "__main__":
