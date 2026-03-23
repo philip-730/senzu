@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Secret env sync for GCP teams"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+authors = [{ name = "philip-730" }]
 keywords = ["gcp", "secrets", "env", "dotenv", "secret-manager"]
 dependencies = [
     "typer>=0.12",
