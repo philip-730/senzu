@@ -45,6 +45,14 @@ Pin to a specific commit or tag if you need stability:
 pip install git+https://github.com/philip-730/senzu@v0.1.0
 ```
 
+To add it to `requirements.txt`:
+
+```
+senzu @ git+https://github.com/philip-730/senzu
+# or pinned:
+senzu @ git+https://github.com/philip-730/senzu@v0.1.0
+```
+
 Requires Python 3.10+. You'll need GCP credentials set up — either `gcloud auth application-default login` locally or a service account in prod.
 
 ---
