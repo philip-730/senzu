@@ -83,7 +83,7 @@ secrets = [
 ```bash
 # Bootstrap — import an existing .env into Secret Manager for the first time
 senzu import dev --from .env
-senzu import dev --from .env --secret app-env          # required if multiple secrets configured
+senzu import dev --from .env --secret app-env          # skip interactive routing, send all keys to this secret
 senzu import dev --from .env --keys DB_URL,DB_PASSWORD # specific keys only
 senzu import dev --from .env --format json             # write as JSON instead of dotenv
 
