@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 import toml
 
-from senzu.config import load_config, SecretRef
+from senzu.config import find_config_root, load_config, SecretRef
 from senzu.exceptions import ConfigNotFoundError, ConfigParseError
 
 
@@ -121,3 +121,40 @@ def test_unknown_format(tmp_path):
     )
     with pytest.raises(ConfigParseError, match="format"):
         load_config(tmp_path)
+
+
+def test_missing_project_raises(tmp_path):
+    write_toml(tmp_path, {"envs": {"dev": {"file": ".env.dev", "secrets": []}}})
+    with pytest.raises(ConfigParseError, match="project"):
+        load_config(tmp_path)
+
+
+def test_missing_file_raises(tmp_path):
+    write_toml(tmp_path, {"envs": {"dev": {"project": "p", "secrets": []}}})
+    with pytest.raises(ConfigParseError, match="file"):
+        load_config(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# find_config_root
+# ---------------------------------------------------------------------------
+
+
+def test_find_config_root_in_cwd(tmp_path, monkeypatch):
+    (tmp_path / "senzu.toml").write_text("")
+    monkeypatch.chdir(tmp_path)
+    assert find_config_root() == tmp_path
+
+
+def test_find_config_root_from_subdirectory(tmp_path, monkeypatch):
+    (tmp_path / "senzu.toml").write_text("")
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+    monkeypatch.chdir(sub)
+    assert find_config_root() == tmp_path
+
+
+def test_find_config_root_not_found(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ConfigNotFoundError):
+        find_config_root()
