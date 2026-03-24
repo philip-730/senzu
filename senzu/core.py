@@ -50,11 +50,23 @@ def write_env_file(path: Path, kv: dict[str, str]) -> None:
 def fetch_remote_kv(env_cfg: EnvConfig) -> dict[str, str]:
     """Fetch and merge all secrets for *env_cfg* into a flat {KEY: value} dict."""
     merged: dict[str, str] = {}
+    seen: dict[str, str] = {}  # key -> secret name, for collision detection
     for secret_ref in env_cfg.secrets:
         raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
         fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
         kv = parse_secret(raw, fmt, secret_ref)
-        merged.update(kv)
+        for key, val in kv.items():
+            if key in merged:
+                warnings.warn(
+                    f"Key collision — '{key}' found in both "
+                    f"'{seen[key]}' and '{secret_ref.secret}'. "
+                    f"Using value from '{secret_ref.secret}' (last wins). "
+                    "Check your secret organisation.",
+                    KeyCollisionWarning,
+                    stacklevel=2,
+                )
+            merged[key] = val
+            seen[key] = secret_ref.secret
     return merged
 
 

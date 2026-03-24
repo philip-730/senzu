@@ -2,17 +2,21 @@ import json
 import pytest
 from pathlib import Path
 
-from senzu.config import SecretRef
+from senzu.config import EnvConfig, SecretRef
 from senzu.core import (
     detect_format,
-    parse_secret,
-    serialize_secret,
     diff_env,
+    fetch_remote_kv,
     generate_settings_source,
+    parse_secret,
+    pull_env,
+    push_env,
     read_env_file,
+    serialize_secret,
     write_env_file,
 )
-from senzu.exceptions import SecretFormatError
+from senzu.exceptions import KeyCollisionWarning, SecretFormatError
+from senzu.lock import LockEntry
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +189,162 @@ def test_generate_settings_source():
     assert "database_url: str" in src
     assert "sa: dict" in src
     assert "Auto-generated" in src
+
+
+# ---------------------------------------------------------------------------
+# write_env_file edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_write_env_file_value_with_space(tmp_path):
+    path = tmp_path / ".env.dev"
+    write_env_file(path, {"KEY": "hello world"})
+    assert 'KEY="hello world"' in path.read_text()
+    assert read_env_file(path)["KEY"] == "hello world"
+
+
+def test_write_env_file_value_with_hash(tmp_path):
+    path = tmp_path / ".env.dev"
+    write_env_file(path, {"KEY": "val#ue"})
+    assert 'KEY="val#ue"' in path.read_text()
+
+
+def test_write_env_file_value_with_equals(tmp_path):
+    path = tmp_path / ".env.dev"
+    write_env_file(path, {"KEY": "a=b"})
+    assert 'KEY="a=b"' in path.read_text()
+
+
+def test_read_env_file_missing(tmp_path):
+    assert read_env_file(tmp_path / "nonexistent.env") == {}
+
+
+# ---------------------------------------------------------------------------
+# fetch_remote_kv
+# ---------------------------------------------------------------------------
+
+
+def _env_cfg(*secret_names: str) -> EnvConfig:
+    return EnvConfig(
+        name="dev",
+        project="p",
+        file=".env.dev",
+        secrets=[SecretRef(secret=s, project="p") for s in secret_names],
+    )
+
+
+def test_fetch_remote_kv_single_secret(mocker):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"DB": "pg://..."}')
+    result = fetch_remote_kv(_env_cfg("app-env"))
+    assert result == {"DB": "pg://..."}
+
+
+def test_fetch_remote_kv_multiple_secrets_merged(mocker):
+    payloads = {
+        "app-env": b'{"DB": "pg://..."}',
+        "api-secrets": b'{"API_KEY": "abc"}',
+    }
+    mocker.patch("senzu.core.fetch_secret_latest", side_effect=lambda p, s: payloads[s])
+    result = fetch_remote_kv(_env_cfg("app-env", "api-secrets"))
+    assert result == {"DB": "pg://...", "API_KEY": "abc"}
+
+
+def test_fetch_remote_kv_collision_warns(mocker):
+    mocker.patch(
+        "senzu.core.fetch_secret_latest",
+        side_effect=lambda p, s: f'{{"SHARED": "from-{s}"}}'.encode(),
+    )
+    with pytest.warns(KeyCollisionWarning, match="SHARED"):
+        result = fetch_remote_kv(_env_cfg("secret-a", "secret-b"))
+    assert result["SHARED"] == "from-secret-b"
+
+
+def test_fetch_remote_kv_raw_type_bypasses_detect_format(mocker):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"type": "sa"}')
+    detect_mock = mocker.patch("senzu.core.detect_format")
+
+    env_cfg = EnvConfig(
+        name="dev",
+        project="p",
+        file=".env.dev",
+        secrets=[SecretRef(secret="firebase", project="p", type="raw", env_var="FIREBASE_CREDS")],
+    )
+    result = fetch_remote_kv(env_cfg)
+
+    detect_mock.assert_not_called()
+    assert "FIREBASE_CREDS" in result
+
+
+# ---------------------------------------------------------------------------
+# pull_env
+# ---------------------------------------------------------------------------
+
+
+def test_pull_env_happy_path(mocker, tmp_path):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"DB": "pg://...", "KEY": "abc"}')
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p")],
+    )
+    merged, lock_entries = pull_env(env_cfg, tmp_path)
+
+    assert merged == {"DB": "pg://...", "KEY": "abc"}
+    assert lock_entries["DB"].secret == "app-env"
+    assert lock_entries["DB"].format == "json"
+
+
+def test_pull_env_collision_warns(mocker, tmp_path):
+    mocker.patch(
+        "senzu.core.fetch_secret_latest",
+        side_effect=lambda p, s: f'{{"SHARED": "from-{s}"}}'.encode(),
+    )
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[
+            SecretRef(secret="secret-a", project="p"),
+            SecretRef(secret="secret-b", project="p"),
+        ],
+    )
+    with pytest.warns(KeyCollisionWarning):
+        merged, lock_entries = pull_env(env_cfg, tmp_path)
+
+    assert merged["SHARED"] == "from-secret-b"
+    assert lock_entries["SHARED"].secret == "secret-b"
+
+
+# ---------------------------------------------------------------------------
+# push_env
+# ---------------------------------------------------------------------------
+
+
+def test_push_env_no_drift_skips_push(mocker, tmp_path):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"DB": "pg://..."}')
+    push_mock = mocker.patch("senzu.core.push_secret_version")
+
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p")],
+    )
+    lock_entries = {"DB": LockEntry(secret="app-env", project="p", format="json")}
+
+    results = push_env(env_cfg, {"DB": "pg://..."}, lock_entries, tmp_path)
+
+    push_mock.assert_not_called()
+    assert not results["app-env"].has_drift
+
+
+def test_push_env_with_drift_pushes(mocker, tmp_path):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"DB": "pg://old"}')
+    push_mock = mocker.patch("senzu.core.push_secret_version")
+
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p")],
+    )
+    lock_entries = {"DB": LockEntry(secret="app-env", project="p", format="json")}
+
+    results = push_env(env_cfg, {"DB": "pg://new"}, lock_entries, tmp_path)
+
+    push_mock.assert_called_once()
+    assert results["app-env"].has_drift
+    assert "DB" in results["app-env"].changed
