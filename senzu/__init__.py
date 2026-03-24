@@ -26,4 +26,9 @@ __all__ = [
     "SenzuValidationError",
 ]
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("senzu")
+except PackageNotFoundError:
+    __version__ = "unknown"
