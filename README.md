@@ -86,13 +86,29 @@ secrets = [
 ]
 ```
 
-Each secret in the `secrets` array is fetched and merged into the local file. If you have a secret that's stored as a single value (not a key/value blob), use `type = "raw"`:
+Each secret in the `secrets` array is fetched and merged into the local file. If you have a secret that's stored as a single value (not a key/value blob), use `type = "raw"`. `env_var` is required when using `type = "raw"` — it sets the env var name the value is written under:
 
 ```toml
 secrets = [
   { secret = "stripe-webhook-secret", type = "raw", env_var = "STRIPE_WEBHOOK_SECRET" },
 ]
 ```
+
+### Cross-project secrets
+
+A secret can pull from a different GCP project than the environment default. This is useful for shared infrastructure secrets owned by a central project:
+
+```toml
+[envs.prod]
+project = "my-app-prod"
+file    = ".env.prod"
+secrets = [
+  { secret = "app-env-prod" },
+  { secret = "datadog-api-key", project = "shared-infra" },
+]
+```
+
+When multiple secrets share a key name, the last secret listed wins. Senzu will emit a warning so you know it happened.
 
 ---
 
@@ -105,22 +121,20 @@ senzu import dev --from .env --secret app-env          # skip interactive routin
 senzu import dev --from .env --keys DB_URL,DB_PASSWORD # specific keys only
 senzu import dev --from .env --format json             # write as JSON instead of dotenv
 
-# Pull all environments
-senzu pull
+# Pull secrets to local .env files
+senzu pull         # all environments defined in senzu.toml
+senzu pull dev     # specific environment only
 
-# Pull a specific environment
-senzu pull dev
-
-# See what's different before you push anything
-senzu diff dev
+# See what's different between local and remote
+senzu diff         # all environments
+senzu diff dev     # specific environment only
 
 # Push local changes back to Secret Manager
-senzu push dev
+senzu push         # all environments (prompts for confirmation per env)
+senzu push dev     # specific environment
+senzu push dev --force  # skip confirmation even if remote has unretrieved changes
 
-# Force push even if remote has unretrieved changes (use carefully)
-senzu push dev --force
-
-# See what environments are configured
+# Show all configured environments, their secrets, GCP projects, and local file status
 senzu status
 
 # Generate a typed Pydantic settings class from your secrets
@@ -139,10 +153,19 @@ from senzu import SenzuSettings
 class Settings(SenzuSettings):
     database_url: str
     api_key: str
-    some_nested_config: dict  # handles JSON blobs stored as quoted strings
+    firebase_creds: dict  # see note on nested JSON below
 
 settings = Settings()
 ```
+
+GCP secrets often store JSON objects (service account keys, connection configs, etc.) that can't be written as raw dotenv values. Senzu encodes these as single-quoted strings in the `.env` file:
+
+```bash
+# .env.dev — what Senzu writes
+FIREBASE_CREDS='{"type":"service_account","project_id":"my-app",...}'
+```
+
+When you declare the field as `dict` (or `list`) in `SenzuSettings`, Senzu automatically deserializes it — so `settings.firebase_creds` is already a Python dict, not a string.
 
 Senzu reads `ENV` or `SENZU_ENV` to figure out which environment you're in, finds the right `.env` file from `senzu.toml`, and loads it. In Cloud Run or any environment where you don't have a file, set `SENZU_USE_SECRET_MANAGER=true` and it reads directly from Secret Manager.
 
