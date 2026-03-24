@@ -86,13 +86,19 @@ secrets = [
 ]
 ```
 
-Each secret in the `secrets` array is fetched and merged into the local file. If you have a secret that's stored as a single value (not a key/value blob), use `type = "raw"`. `env_var` is required when using `type = "raw"` — it sets the env var name the value is written under:
+Each secret in the `secrets` array is fetched and merged into the local file. If you want the entire secret stored as a single env var rather than expanded into individual keys, use `type = "raw"`. `env_var` is required — it sets the env var name the value is written under:
 
 ```toml
 secrets = [
+  # Scalar value (e.g. a webhook secret string)
   { secret = "stripe-webhook-secret", type = "raw", env_var = "STRIPE_WEBHOOK_SECRET" },
+
+  # JSON object stored whole — useful when you want one dict, not individual keys
+  { secret = "firebase-sdk", type = "raw", env_var = "FIREBASE_CREDS" },
 ]
 ```
+
+For the JSON case, Senzu stores it single-quoted in the `.env` file (`FIREBASE_CREDS='{"type":"service_account",...}'`). Declare the field as `dict` in `SenzuSettings` and it's automatically deserialized.
 
 ### Cross-project secrets
 
@@ -158,7 +164,7 @@ class Settings(SenzuSettings):
 settings = Settings()
 ```
 
-GCP secrets often store JSON objects (service account keys, connection configs, etc.) that can't be written as raw dotenv values. Senzu encodes these as single-quoted strings in the `.env` file:
+GCP secrets often store nested JSON objects (service account keys, connection configs, etc.) that can't be written as raw dotenv values. Senzu encodes these as single-quoted strings in the `.env` file:
 
 ```bash
 # .env.dev — what Senzu writes
