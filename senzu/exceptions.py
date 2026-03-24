@@ -11,7 +11,7 @@ class ConfigParseError(SenzuError):
 
 
 class LockNotFoundError(SenzuError):
-    """.senzu.lock not found — user needs to pull first."""
+    """senzu.lock not found — user needs to pull first."""
 
 
 class SecretFetchError(SenzuError):
