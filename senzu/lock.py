@@ -7,7 +7,7 @@ from typing import Literal
 
 from .exceptions import LockNotFoundError
 
-LOCK_FILENAME = ".senzu.lock"
+LOCK_FILENAME = "senzu.lock"
 
 
 @dataclass

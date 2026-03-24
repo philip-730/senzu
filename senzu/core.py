@@ -300,7 +300,7 @@ def push_env(
         if entry is None:
             # Key not in lock — shouldn't happen after a pull, skip with warning
             warnings.warn(
-                f"Key '{key}' not found in .senzu.lock — skipping.",
+                f"Key '{key}' not found in senzu.lock — skipping.",
                 stacklevel=2,
             )
             continue

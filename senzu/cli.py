@@ -118,7 +118,7 @@ def pull(
         console.print(f"  Wrote {len(merged)} keys to [cyan]{env_cfg.file}[/cyan]")
 
     save_lock(root, lock_data)
-    console.print(f"  Lock file updated: [cyan].senzu.lock[/cyan]")
+    console.print(f"  Lock file updated: [cyan]senzu.lock[/cyan]")
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +592,7 @@ def import_cmd(
 
     lock_data[env] = env_lock
     save_lock(root, lock_data)
-    console.print(f"  Lock file updated: [cyan].senzu.lock[/cyan]")
+    console.print(f"  Lock file updated: [cyan]senzu.lock[/cyan]")
 
 
 if __name__ == "__main__":
