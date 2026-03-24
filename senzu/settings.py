@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
+from .config import find_config_root, load_config
 from .exceptions import SenzuValidationError
 
 
@@ -50,6 +51,8 @@ class SenzuSettings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         # If SENZU_USE_SECRET_MANAGER is set, inject a Secret Manager source.
+        # Deferred import: keeps google-cloud-secret-manager out of the import-time
+        # critical path — only loaded when the env var is actually set.
         if os.environ.get("SENZU_USE_SECRET_MANAGER", "").lower() in ("1", "true", "yes"):
             from .secret_manager_source import SecretManagerSettingsSource
 
@@ -63,6 +66,7 @@ class SenzuSettings(BaseSettings):
         env_name = cls._senzu_env or _detect_env()
         env_file = _resolve_env_file(env_name)
 
+        # Deferred import: minor — avoids pulling pydantic_settings internals at module load.
         from pydantic_settings import DotEnvSettingsSource
 
         return (init_settings, env_settings, DotEnvSettingsSource(settings_cls, env_file=env_file))
@@ -86,8 +90,6 @@ class SenzuSettings(BaseSettings):
 def _resolve_env_file(env_name: str) -> str | None:
     """Find the .env.<env_name> file by loading senzu.toml."""
     try:
-        from .config import find_config_root, load_config
-
         root = find_config_root()
         cfg = load_config(root)
         env_cfg = cfg.envs.get(env_name)
