@@ -1,170 +1,16 @@
 from __future__ import annotations
 
-import json
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from dotenv import dotenv_values
 
-from .config import EnvConfig, SecretRef, SenzuConfig
-from .exceptions import (
-    KeyCollisionWarning,
-    SecretFetchError,
-    SecretFormatError,
-    SecretPushError,
-)
+from .config import EnvConfig, SecretRef
+from .exceptions import KeyCollisionWarning
+from .formats import SecretFormat, detect_format, parse_secret, serialize_secret
+from .gcp import fetch_secret_latest, push_secret_version
 from .lock import LockData, LockEntry
-
-# ---------------------------------------------------------------------------
-# GCP Secret Manager client
-# ---------------------------------------------------------------------------
-
-
-def _get_secret_client():
-    from google.cloud import secretmanager  # type: ignore
-
-    return secretmanager.SecretManagerServiceClient()
-
-
-def fetch_secret_latest(project: str, secret_name: str) -> bytes:
-    """Return the latest version payload bytes for *secret_name* in *project*."""
-    try:
-        client = _get_secret_client()
-        name = f"projects/{project}/secrets/{secret_name}/versions/latest"
-        response = client.access_secret_version(request={"name": name})
-        return response.payload.data
-    except Exception as exc:
-        raise SecretFetchError(
-            f"Failed to fetch secret '{secret_name}' from project '{project}': {exc}"
-        ) from exc
-
-
-def push_secret_version(project: str, secret_name: str, payload: bytes) -> None:
-    """Add a new version to *secret_name* in *project*."""
-    try:
-        client = _get_secret_client()
-        parent = f"projects/{project}/secrets/{secret_name}"
-        client.add_secret_version(
-            request={"parent": parent, "payload": {"data": payload}}
-        )
-    except Exception as exc:
-        raise SecretPushError(
-            f"Failed to push secret '{secret_name}' to project '{project}': {exc}"
-        ) from exc
-
-
-def ensure_secret_exists(project: str, secret_name: str) -> None:
-    """Create the secret resource if it doesn't already exist."""
-    try:
-        client = _get_secret_client()
-        client.create_secret(
-            request={
-                "parent": f"projects/{project}",
-                "secret_id": secret_name,
-                "secret": {"replication": {"automatic": {}}},
-            }
-        )
-    except Exception as exc:
-        if "already exists" in str(exc).lower() or "409" in str(exc):
-            return
-        raise SecretPushError(
-            f"Failed to create secret '{secret_name}' in project '{project}': {exc}"
-        ) from exc
-
-
-# ---------------------------------------------------------------------------
-# Format detection & parsing
-# ---------------------------------------------------------------------------
-
-SecretFormat = Literal["json", "dotenv"]
-
-
-def detect_format(raw: bytes, hint: str | None = None) -> SecretFormat:
-    """Return 'json' or 'dotenv'.  *hint* is the user-pinned format if any."""
-    if hint is not None:
-        return hint  # type: ignore[return-value]
-    text = raw.decode("utf-8", errors="replace")
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return "json"
-    except json.JSONDecodeError:
-        pass
-    # Try dotenv — if every non-comment line is KEY=value-ish we accept it
-    lines = [l for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
-    if all("=" in l for l in lines):
-        return "dotenv"
-    raise SecretFormatError(
-        "Could not auto-detect secret format (tried JSON and dotenv). "
-        "Pin it explicitly with `format = \"json\"` or `format = \"dotenv\"` in senzu.toml."
-    )
-
-
-def parse_secret(
-    raw: bytes,
-    fmt: SecretFormat,
-    secret_ref: SecretRef,
-) -> dict[str, str]:
-    """Parse *raw* bytes into a flat {KEY: value_str} dict.
-
-    For type='raw', returns {env_var: single-quoted JSON string}.
-    For JSON format: flat strings kept as-is; nested objects JSON-serialized and single-quoted.
-    For dotenv format: parsed via python-dotenv.
-    """
-    text = raw.decode("utf-8", errors="replace")
-
-    if secret_ref.type == "raw":
-        # Whole secret is one value — store as single-quoted JSON string
-        env_var = secret_ref.env_var
-        assert env_var is not None  # validated in config loading
-        # Validate it's valid JSON (warn otherwise)
-        try:
-            obj = json.loads(text)
-            value = "'" + json.dumps(obj, separators=(",", ":")) + "'"
-        except json.JSONDecodeError:
-            value = text  # store raw if not JSON
-        return {env_var: value}
-
-    if fmt == "json":
-        data = json.loads(text)
-        result: dict[str, str] = {}
-        for key, val in data.items():
-            if isinstance(val, (dict, list)):
-                result[key] = "'" + json.dumps(val, separators=(",", ":")) + "'"
-            else:
-                result[key] = str(val)
-        return result
-
-    # dotenv
-    parsed = dotenv_values(stream=__import__("io").StringIO(text))
-    return {k: v or "" for k, v in parsed.items()}
-
-
-def serialize_secret(kv: dict[str, str], fmt: SecretFormat) -> bytes:
-    """Serialize a flat {KEY: value} dict back to bytes for Secret Manager."""
-    if fmt == "json":
-        # Deserialize single-quoted JSON strings back to objects
-        out: dict = {}
-        for key, val in kv.items():
-            if val.startswith("'") and val.endswith("'"):
-                inner = val[1:-1]
-                try:
-                    out[key] = json.loads(inner)
-                    continue
-                except json.JSONDecodeError:
-                    pass
-            out[key] = val
-        return json.dumps(out, indent=2).encode()
-
-    # dotenv
-    lines = []
-    for key, val in kv.items():
-        # Quote values that contain spaces or special chars
-        if " " in val or "#" in val or "\n" in val:
-            val = f'"{val}"'
-        lines.append(f"{key}={val}")
-    return "\n".join(lines).encode()
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +40,53 @@ def write_env_file(path: Path, kv: dict[str, str]) -> None:
         else:
             lines.append(f"{key}={val}")
     path.write_text("\n".join(lines) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Fetch remote secrets
+# ---------------------------------------------------------------------------
+
+
+def fetch_remote_kv(env_cfg: EnvConfig) -> dict[str, str]:
+    """Fetch and merge all secrets for *env_cfg* into a flat {KEY: value} dict."""
+    merged: dict[str, str] = {}
+    for secret_ref in env_cfg.secrets:
+        raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
+        fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
+        kv = parse_secret(raw, fmt, secret_ref)
+        merged.update(kv)
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Diff
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DiffResult:
+    added: dict[str, str]      # keys only in local
+    removed: dict[str, str]    # keys only in remote
+    changed: dict[str, tuple[str, str]]  # keys in both but value differs: {key: (local, remote)}
+
+    @property
+    def has_drift(self) -> bool:
+        return bool(self.added or self.removed or self.changed)
+
+
+def diff_env(local_kv: dict[str, str], remote_kv: dict[str, str]) -> DiffResult:
+    """Compare local vs remote key/value dicts."""
+    local_keys = set(local_kv)
+    remote_keys = set(remote_kv)
+
+    added = {k: local_kv[k] for k in local_keys - remote_keys}
+    removed = {k: remote_kv[k] for k in remote_keys - local_keys}
+    changed = {
+        k: (local_kv[k], remote_kv[k])
+        for k in local_keys & remote_keys
+        if local_kv[k] != remote_kv[k]
+    }
+    return DiffResult(added=added, removed=removed, changed=changed)
 
 
 # ---------------------------------------------------------------------------
@@ -241,44 +134,6 @@ def pull_env(
 
 
 # ---------------------------------------------------------------------------
-# Diff
-# ---------------------------------------------------------------------------
-
-
-class DiffResult:
-    __slots__ = ("added", "removed", "changed")
-
-    def __init__(
-        self,
-        added: dict[str, str],
-        removed: dict[str, str],
-        changed: dict[str, tuple[str, str]],
-    ):
-        self.added = added        # keys only in local
-        self.removed = removed    # keys only in remote
-        self.changed = changed    # keys in both but value differs: {key: (local, remote)}
-
-    @property
-    def has_drift(self) -> bool:
-        return bool(self.added or self.removed or self.changed)
-
-
-def diff_env(local_kv: dict[str, str], remote_kv: dict[str, str]) -> DiffResult:
-    """Compare local vs remote key/value dicts."""
-    local_keys = set(local_kv)
-    remote_keys = set(remote_kv)
-
-    added = {k: local_kv[k] for k in local_keys - remote_keys}
-    removed = {k: remote_kv[k] for k in remote_keys - local_keys}
-    changed = {
-        k: (local_kv[k], remote_kv[k])
-        for k in local_keys & remote_keys
-        if local_kv[k] != remote_kv[k]
-    }
-    return DiffResult(added=added, removed=removed, changed=changed)
-
-
-# ---------------------------------------------------------------------------
 # Push
 # ---------------------------------------------------------------------------
 
@@ -320,7 +175,6 @@ def push_env(
 
         # Fetch remote
         raw_remote = fetch_secret_latest(project, secret_name)
-        # For raw secrets, parse differently
         secret_ref = _find_secret_ref(env_cfg, secret_name, project)
         remote_kv_all = parse_secret(raw_remote, fmt, secret_ref) if secret_ref else {}
 

@@ -14,27 +14,22 @@ from rich import print as rprint
 from .config import load_config, find_config_root
 from .core import (
     DiffResult,
-    SecretFormat,
-    detect_format,
     diff_env,
-    ensure_secret_exists,
-    fetch_secret_latest,
+    fetch_remote_kv,
     generate_settings_source,
-    parse_secret,
     pull_env,
     push_env,
-    push_secret_version,
     read_env_file,
-    serialize_secret,
     write_env_file,
 )
 from .exceptions import (
     ConfigNotFoundError,
     KeyCollisionWarning,
     LockNotFoundError,
-    RemoteDriftError,
     SenzuError,
 )
+from .formats import SecretFormat, detect_format, parse_secret, serialize_secret
+from .gcp import ensure_secret_exists, fetch_secret_latest, push_secret_version
 from .lock import LockData, LockEntry, load_lock, save_lock
 
 app = typer.Typer(
@@ -167,18 +162,11 @@ def push(
 
         console.print(f"\nComparing local [cyan]{env_cfg.file}[/cyan] with remote...")
 
-        # Build remote KV for all secrets in this env
-        remote_kv: dict[str, str] = {}
-        for secret_ref in env_cfg.secrets:
-            try:
-                raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
-            except SenzuError as exc:
-                err_console.print(f"[red]Error:[/red] {exc}")
-                raise typer.Exit(1)
-
-            fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
-            kv = parse_secret(raw, fmt, secret_ref)
-            remote_kv.update(kv)
+        try:
+            remote_kv = fetch_remote_kv(env_cfg)
+        except SenzuError as exc:
+            err_console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1)
 
         overall_diff = diff_env(local_kv, remote_kv)
 
@@ -251,17 +239,11 @@ def diff(
         env_path = root / env_cfg.file
         local_kv = read_env_file(env_path)
 
-        remote_kv: dict[str, str] = {}
-        for secret_ref in env_cfg.secrets:
-            try:
-                raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
-            except SenzuError as exc:
-                err_console.print(f"[red]Error:[/red] {exc}")
-                raise typer.Exit(1)
-
-            fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
-            kv = parse_secret(raw, fmt, secret_ref)
-            remote_kv.update(kv)
+        try:
+            remote_kv = fetch_remote_kv(env_cfg)
+        except SenzuError as exc:
+            err_console.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1)
 
         dr = diff_env(local_kv, remote_kv)
 
@@ -380,17 +362,11 @@ def generate(
         err_console.print(f"[red]Error:[/red] Unknown env '{env}'.")
         raise typer.Exit(1)
 
-    remote_kv: dict[str, str] = {}
-    for secret_ref in env_cfg.secrets:
-        try:
-            raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
-        except SenzuError as exc:
-            err_console.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(1)
-
-        fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
-        kv = parse_secret(raw, fmt, secret_ref)
-        remote_kv.update(kv)
+    try:
+        remote_kv = fetch_remote_kv(env_cfg)
+    except SenzuError as exc:
+        err_console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
 
     out_path = Path(out)
     if out_path.exists():

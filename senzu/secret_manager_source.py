@@ -17,8 +17,9 @@ class SecretManagerSettingsSource(PydanticBaseSettingsSource):
         return None, field_name, False
 
     def __call__(self) -> dict[str, Any]:
+        # Deferred imports: keep GCP libs out of the import-time critical path.
         from .config import find_config_root, load_config
-        from .core import detect_format, fetch_secret_latest, parse_secret
+        from .core import fetch_remote_kv
 
         env_name = os.environ.get("ENV") or os.environ.get("SENZU_ENV") or "dev"
 
@@ -36,11 +37,5 @@ class SecretManagerSettingsSource(PydanticBaseSettingsSource):
                 f"SENZU_USE_SECRET_MANAGER=true but env '{env_name}' not found in senzu.toml."
             )
 
-        merged: dict[str, Any] = {}
-        for secret_ref in env_cfg.secrets:
-            raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
-            fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
-            kv = parse_secret(raw, fmt, secret_ref)
-            merged.update(kv)
-
+        merged = fetch_remote_kv(env_cfg)
         return {k.lower(): v for k, v in merged.items()}
