@@ -166,9 +166,20 @@ settings = Settings()
 
 GCP secrets often store nested JSON objects (service account keys, connection configs, etc.) that can't be written as raw dotenv values. Senzu encodes these as single-quoted strings in the `.env` file:
 
+```json
+// Secret Manager — app-env secret value
+{
+  "database_url": "postgres://...",
+  "api_key": "sk-...",
+  "firebase_creds": { "type": "service_account", "project_id": "my-app" }
+}
+```
+
 ```bash
-# .env.dev — what Senzu writes
-FIREBASE_CREDS='{"type":"service_account","project_id":"my-app",...}'
+# .env.dev — what Senzu writes after senzu pull
+DATABASE_URL=postgres://...
+API_KEY=sk-...
+FIREBASE_CREDS='{"type":"service_account","project_id":"my-app"}'
 ```
 
 When you declare the field as `dict` (or `list`) in `SenzuSettings`, Senzu automatically deserializes it — so `settings.firebase_creds` is already a Python dict, not a string.
