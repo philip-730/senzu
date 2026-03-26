@@ -75,8 +75,17 @@ def _print_diff(dr: DiffResult, secret_label: str = "") -> None:
 @app.command()
 def pull(
     env: Optional[str] = typer.Argument(None, help="Env name (e.g. dev, prod). Omit for all."),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Fully replace local file with remote data, discarding local-only keys.",
+    ),
 ) -> None:
-    """Fetch secrets from Secret Manager and write to local .env files."""
+    """Fetch secrets from Secret Manager and write to local .env files.
+
+    By default, keys present only in your local file (not yet pushed to remote)
+    are preserved. Use --overwrite to replace the local file entirely with remote data.
+    """
     root = _root()
     cfg = _cfg(root)
 
@@ -108,9 +117,22 @@ def pull(
             err_console.print(f"[yellow]Warning:[/yellow] {w.message}")
 
         env_path = root / env_cfg.file
-        write_env_file(env_path, merged)
+
+        if not overwrite and env_path.exists():
+            local_kv = read_env_file(env_path)
+            local_only = {k: v for k, v in local_kv.items() if k not in merged}
+            if local_only:
+                console.print(
+                    f"  [yellow]Kept {len(local_only)} local-only key(s) not in remote:[/yellow] "
+                    + ", ".join(sorted(local_only))
+                )
+            final_kv = {**local_only, **merged}
+        else:
+            final_kv = merged
+
+        write_env_file(env_path, final_kv)
         lock_data[env_name] = lock_entries
-        console.print(f"  Wrote {len(merged)} keys to [cyan]{env_cfg.file}[/cyan]")
+        console.print(f"  Wrote {len(final_kv)} keys to [cyan]{env_cfg.file}[/cyan]")
 
     save_lock(root, lock_data)
     console.print(f"  Lock file updated: [cyan]senzu.lock[/cyan]")
@@ -299,18 +321,26 @@ def status() -> None:
 
 
 @app.command()
-def init() -> None:
+def init(
+    project: Optional[str] = typer.Option(None, "--project", help="GCP project ID."),
+    file: Optional[str] = typer.Option(None, "--file", help="Local .env file path."),
+    secret: Optional[str] = typer.Option(None, "--secret", help="Secret name in Secret Manager."),
+    env: str = typer.Option("dev", "--env", help="Environment name (default: dev)."),
+) -> None:
     """Scaffold a senzu.toml interactively and update .gitignore."""
     config_path = Path("senzu.toml")
     if config_path.exists():
         console.print("[yellow]senzu.toml already exists.[/yellow] Skipping scaffold.")
     else:
-        console.print("Let's create a [cyan]senzu.toml[/cyan].")
-        project = typer.prompt("GCP project ID for 'dev'")
-        file = typer.prompt("Local .env file for 'dev'", default=".env.dev")
-        secret = typer.prompt("Secret name in Secret Manager", default="app-env")
+        console.print(f"Let's create a [cyan]senzu.toml[/cyan] for env [bold]{env}[/bold].")
+        if project is None:
+            project = typer.prompt(f"GCP project ID for '{env}'")
+        if file is None:
+            file = typer.prompt(f"Local .env file for '{env}'", default=f".env.{env}")
+        if secret is None:
+            secret = typer.prompt("Secret name in Secret Manager", default="app-env")
 
-        toml_content = f"""[envs.dev]
+        toml_content = f"""[envs.{env}]
 project = "{project}"
 file    = "{file}"
 secrets = [
@@ -326,7 +356,13 @@ secrets = [
 # ]
 """
         config_path.write_text(toml_content)
-        console.print(f"Created [cyan]senzu.toml[/cyan].")
+        console.print(f"\nCreated [cyan]senzu.toml[/cyan]:\n")
+        console.print(toml_content.rstrip())
+        console.print(
+            f"\n[bold]Next steps:[/bold]\n"
+            f"  [cyan]senzu import {env}[/cyan]   — push your local {file} to Secret Manager\n"
+            f"  [cyan]senzu pull {env}[/cyan]     — fetch existing secrets from Secret Manager\n"
+        )
 
     # Update .gitignore
     gitignore = Path(".gitignore")
@@ -506,14 +542,56 @@ def import_cmd(
             err_console.print(f"[red]Error:[/red] Unknown format '{resolved}'. Use 'json' or 'dotenv'.")
             raise typer.Exit(1)
 
-    # Show summary
-    console.print(f"\nImporting [bold]{len(source_kv)}[/bold] keys from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]")
+    # Fetch remote for each group now, before confirmation, so the summary is accurate
+    remote_cache: dict[str, dict[str, str]] = {}
+    resolved_fmt_cache: dict[str, SecretFormat] = {}
     for secret_name, group_keys in groups.items():
         ref = ref_by_name[secret_name]
-        resolved_fmt = fmt or ref.format or "dotenv"
-        console.print(f"  → [cyan]{secret_name}[/cyan]  (project: {ref.project}, format: {resolved_fmt})")
-        for k in sorted(group_keys):
-            console.print(f"    [green]+[/green] {k}")
+        resolved_fmt_cache[secret_name] = fmt or ref.format or "dotenv"  # type: ignore[assignment]
+        try:
+            raw_remote = fetch_secret_latest(ref.project, ref.secret)
+            remote_fmt = detect_format(raw_remote, ref.format)
+            remote_cache[secret_name] = parse_secret(raw_remote, remote_fmt, ref)
+        except SenzuError:
+            remote_cache[secret_name] = {}  # fresh secret
+
+    # Compute per-group diffs
+    GroupDiff = tuple[list[str], list[str], list[str]]  # (new_keys, changed_keys, unchanged_keys)
+    group_diffs: dict[str, GroupDiff] = {}
+    total_new = 0
+    total_changed = 0
+    for secret_name, group_keys in groups.items():
+        remote_kv = remote_cache[secret_name]
+        group_kv = {k: source_kv[k] for k in group_keys}
+        new_keys = [k for k in group_keys if k not in remote_kv]
+        changed_keys = [k for k in group_keys if k in remote_kv and remote_kv[k] != group_kv[k]]
+        unchanged_keys = [k for k in group_keys if k in remote_kv and remote_kv[k] == group_kv[k]]
+        group_diffs[secret_name] = (new_keys, changed_keys, unchanged_keys)
+        total_new += len(new_keys)
+        total_changed += len(changed_keys)
+
+    if total_new == 0 and total_changed == 0:
+        console.print("Nothing to import — remote is already up to date.")
+        raise typer.Exit(0)
+
+    # Show diff-style summary
+    console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]")
+    for secret_name, (new_keys, changed_keys, unchanged_keys) in group_diffs.items():
+        ref = ref_by_name[secret_name]
+        parts = []
+        if new_keys:
+            parts.append(f"[green]{len(new_keys)} new[/green]")
+        if changed_keys:
+            parts.append(f"[yellow]{len(changed_keys)} changed[/yellow]")
+        if unchanged_keys:
+            parts.append(f"[dim]{len(unchanged_keys)} unchanged[/dim]")
+        console.print(f"  → [cyan]{secret_name}[/cyan]  ({', '.join(parts)})")
+        for k in sorted(new_keys):
+            console.print(f"    [green]+ {k}[/green]")
+        for k in sorted(changed_keys):
+            console.print(f"    [yellow]~ {k}[/yellow]")
+        for k in sorted(unchanged_keys):
+            console.print(f"    [dim]  {k}[/dim]")
 
     if not force:
         secrets_list = ", ".join(f"[cyan]{n}[/cyan]" for n in groups)
@@ -532,22 +610,14 @@ def import_cmd(
 
     env_lock = lock_data.get(env, {})
 
-    # Push each group to its target secret
+    # Push each group to its target secret (reuse cached remote data)
     for secret_name, group_keys in groups.items():
         ref = ref_by_name[secret_name]
-        resolved_fmt: SecretFormat = fmt or ref.format or "dotenv"  # type: ignore[assignment]
+        resolved_fmt: SecretFormat = resolved_fmt_cache[secret_name]
         group_kv = {k: source_kv[k] for k in group_keys}
+        remote_kv = remote_cache[secret_name]
 
-        # Merge with existing remote — imported keys win
-        merged_kv: dict[str, str] = dict(group_kv)
-        try:
-            raw_remote = fetch_secret_latest(ref.project, ref.secret)
-            remote_fmt = detect_format(raw_remote, ref.format)
-            remote_kv = parse_secret(raw_remote, remote_fmt, ref)
-            merged_kv = {**remote_kv, **group_kv}
-            console.print(f"  [dim]{secret_name}: merging with existing remote — imported keys take precedence.[/dim]")
-        except SenzuError:
-            pass  # fresh import
+        merged_kv = {**remote_kv, **group_kv}
 
         try:
             ensure_secret_exists(ref.project, ref.secret)
@@ -557,6 +627,7 @@ def import_cmd(
             err_console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(1)
 
+        new_keys, changed_keys, _ = group_diffs[secret_name]
         for key in group_keys:
             env_lock[key] = LockEntry(
                 secret=ref.secret,
@@ -564,7 +635,13 @@ def import_cmd(
                 format=resolved_fmt,
                 type=ref.type,
             )
-        console.print(f"  Pushed [bold]{len(group_keys)}[/bold] keys to [cyan]{ref.secret}[/cyan].")
+        console.print(
+            f"  Pushed to [cyan]{ref.secret}[/cyan]: "
+            + ", ".join(filter(None, [
+                f"[green]{len(new_keys)} new[/green]" if new_keys else "",
+                f"[yellow]{len(changed_keys)} changed[/yellow]" if changed_keys else "",
+            ]))
+        )
 
     lock_data[env] = env_lock
     save_lock(root, lock_data)
