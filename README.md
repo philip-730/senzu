@@ -12,14 +12,14 @@ Most teams end up with a shared `.env` in a private Slack channel, a Notion doc,
 
 Senzu fixes this:
 
-- **`senzu pull`** — dumps all your configured secrets into a local `.env` file in one command. Handles JSON and dotenv formats automatically. Works across multiple secrets per environment. Done.
+- **`senzu pull`** — fetches all your configured secrets into a local `.env` file in one command. Handles JSON and dotenv formats automatically. Works across multiple secrets per environment. If your local file already has keys that aren't in remote yet, they're preserved — remote wins on conflicts, but local-only keys survive. Use `--overwrite` if you want the remote to fully replace your local file.
 
 - **`senzu push`** — pushes local changes back to Secret Manager. But here's the thing: it actually checks if someone else changed the remote since you last pulled. If they did, it blocks you.
 - **`senzu diff`** — see exactly what's different between your local file and what's in Secret Manager, without touching anything. Pipe it into CI, use it in code review, whatever.
 
 - **Lock file** — after a pull, Senzu writes `senzu.lock` which tracks which key came from which secret and which project. This is what makes push safe. It knows exactly where to send each key back, even if you're pulling from 5 different secrets into one `.env`.
 
-- **`senzu import`** — already have a `.env` file and want to get into Secret Manager without touching the GCP console? `senzu import dev --from .env` creates the secret if it doesn't exist, pushes the keys, and writes `senzu.lock` so you're immediately ready to pull/push. If the secret already has data, it merges — your local keys win.
+- **`senzu import`** — already have a `.env` file and want to get into Secret Manager without touching the GCP console? `senzu import dev --from .env` creates the secret if it doesn't exist, pushes the keys, and writes `senzu.lock` so you're immediately ready to pull/push. If the secret already has data, it merges — your local keys win. Before confirming, it shows you exactly which keys are new, which are changed, and which are unchanged, so you know what you're actually pushing. If nothing has changed, it exits early.
 
 - **Multiple environments** — `dev`, `staging`, `prod`, whatever you want. Each one can have its own GCP project, its own secrets, its own local file. `senzu pull dev` or `senzu pull prod`, no config flags needed.
 
@@ -63,9 +63,12 @@ Run the init wizard in your project root:
 
 ```bash
 senzu init
+
+# or skip the prompts entirely with flags
+senzu init --project my-gcp-project --env dev --file .env.dev --secret app-env
 ```
 
-This creates `senzu.toml` and updates `.gitignore` to exclude your `.env.*` files. You don't want those committed.
+This creates `senzu.toml` and updates `.gitignore` to exclude your `.env.*` files. You don't want those committed. The `--env` flag controls the environment name (defaults to `dev`) — useful if you want to scaffold a non-dev env first.
 
 Or write `senzu.toml` yourself:
 
@@ -128,8 +131,9 @@ senzu import dev --from .env --keys DB_URL,DB_PASSWORD # specific keys only
 senzu import dev --from .env --format json             # write as JSON instead of dotenv
 
 # Pull secrets to local .env files
-senzu pull         # all environments defined in senzu.toml
-senzu pull dev     # specific environment only
+senzu pull              # all environments defined in senzu.toml
+senzu pull dev          # specific environment only
+senzu pull dev --overwrite  # fully replace local file with remote (discards local-only keys)
 
 # See what's different between local and remote
 senzu diff         # all environments
