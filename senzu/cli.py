@@ -70,8 +70,12 @@ def _print_diff(dr: DiffResult, lock_entries: dict[str, LockEntry] | None = None
             return e.secret, e.project
         return "—", "—"
 
+    untracked: list[str] = []
+
     for key in sorted(dr.added):
         secret, project = _lock(key)
+        if secret == "—":
+            untracked.append(key)
         table.add_row(f"[green]{key}[/green]", "[green]local only[/green]", secret, project)
     for key in sorted(dr.removed):
         secret, project = _lock(key)
@@ -81,6 +85,13 @@ def _print_diff(dr: DiffResult, lock_entries: dict[str, LockEntry] | None = None
         table.add_row(f"[yellow]{key}[/yellow]", "[yellow]changed[/yellow]", secret, project)
 
     console.print(table)
+
+    if untracked:
+        console.print(
+            f"  [dim]Note: {', '.join(untracked)} "
+            f"{'has' if len(untracked) == 1 else 'have'} no lock entry and will be skipped by push. "
+            f"Run [/dim][cyan]senzu import[/cyan][dim] to register {'it' if len(untracked) == 1 else 'them'}.[/dim]"
+        )
 
 
 # ---------------------------------------------------------------------------
