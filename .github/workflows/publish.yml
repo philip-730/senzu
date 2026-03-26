@@ -30,9 +30,6 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/senzu
     steps:
       - uses: actions/download-artifact@v4
         with:
