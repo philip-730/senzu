@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.0](https://github.com/philip-730/senzu/compare/v0.1.0...v0.2.0) (2026-03-26)
+
+
+### Features
+
+* show GCP project name in pull, push, and import output ([6e1047f](https://github.com/philip-730/senzu/commit/6e1047f5eb883b0477e0c399b91780b4c1c86578))
+* show project/secret in tables for diff, push, and import output ([fd08dc3](https://github.com/philip-730/senzu/commit/fd08dc3c98769406ef053d27e940961a569bb3c0))
+
+
+### Bug Fixes
+
+* distinguish first pull from update, simplify push confirmation ([645b80a](https://github.com/philip-730/senzu/commit/645b80a6bb439cb4f0d6f4734ac844045bac1b33))
+* flag untracked local-only keys in diff output ([9c964b3](https://github.com/philip-730/senzu/commit/9c964b363cb14c203706dc70915440ac5295e834))
+* pull preserves local-only keys, import shows accurate diff, init supports flags ([c48da77](https://github.com/philip-730/senzu/commit/c48da7772211828b30fc78afc70e485ccddc4096))
+
+
+### Documentation
+
+* update README for pull merge behavior, import diff preview, init flags ([0969cdc](https://github.com/philip-730/senzu/commit/0969cdcc1d24333e25b7028c74d34aefdabe4fdf))
+
 ## 0.1.0 (2026-03-24)
 
 
