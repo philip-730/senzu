@@ -14,6 +14,8 @@ LOCK_FILENAME = "senzu.lock"
 class LockEntry:
     secret: str
     project: str
+    provider: str = "gcp"  # "gcp" | "aws"
+    region: str | None = None  # AWS region
     format: Literal["json", "dotenv"] | None = None
     type: Literal["raw"] | None = None
 
@@ -35,7 +37,9 @@ def load_lock(root: Path) -> LockData:
         for key, entry in keys.items():
             result[env_name][key] = LockEntry(
                 secret=entry["secret"],
-                project=entry["project"],
+                project=entry.get("project", ""),
+                provider=entry.get("provider", "gcp"),
+                region=entry.get("region"),
                 format=entry.get("format"),
                 type=entry.get("type"),
             )
@@ -48,7 +52,13 @@ def save_lock(root: Path, data: LockData) -> None:
     for env_name, keys in data.items():
         serialized[env_name] = {}
         for key, entry in keys.items():
-            obj: dict = {"secret": entry.secret, "project": entry.project}
+            obj: dict = {
+                "secret": entry.secret,
+                "project": entry.project,
+                "provider": entry.provider,
+            }
+            if entry.region is not None:
+                obj["region"] = entry.region
             if entry.format is not None:
                 obj["format"] = entry.format
             if entry.type is not None:

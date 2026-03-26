@@ -9,8 +9,8 @@ from dotenv import dotenv_values
 from .config import EnvConfig, SecretRef
 from .exceptions import KeyCollisionWarning
 from .formats import SecretFormat, detect_format, parse_secret, serialize_secret
-from .gcp import fetch_secret_latest, push_secret_version
 from .lock import LockData, LockEntry
+from .providers.factory import get_provider_for_lock_entry, get_provider_for_ref
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ def fetch_remote_kv(env_cfg: EnvConfig) -> dict[str, str]:
     merged: dict[str, str] = {}
     seen: dict[str, str] = {}  # key -> secret name, for collision detection
     for secret_ref in env_cfg.secrets:
-        raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
+        raw = get_provider_for_ref(secret_ref).fetch_latest(secret_ref.secret)
         fmt = "json" if secret_ref.type == "raw" else detect_format(raw, secret_ref.format)
         kv = parse_secret(raw, fmt, secret_ref)
         for key, val in kv.items():
@@ -115,7 +115,7 @@ def pull_env(
     lock_entries: dict[str, LockEntry] = {}
 
     for secret_ref in env_cfg.secrets:
-        raw = fetch_secret_latest(secret_ref.project, secret_ref.secret)
+        raw = get_provider_for_ref(secret_ref).fetch_latest(secret_ref.secret)
 
         if secret_ref.type == "raw":
             fmt: SecretFormat = "json"
@@ -138,6 +138,8 @@ def pull_env(
             lock_entries[key] = LockEntry(
                 secret=secret_ref.secret,
                 project=secret_ref.project,
+                provider=secret_ref.provider,
+                region=secret_ref.region,
                 format=fmt if secret_ref.type != "raw" else None,
                 type=secret_ref.type,
             )
@@ -160,8 +162,8 @@ def push_env(
 
     Returns a mapping of secret_name -> DiffResult for reporting.
     """
-    # Group local keys by (secret, project)
-    groups: dict[tuple[str, str], dict[str, str]] = {}
+    # Group local keys by (secret, provider, project-or-region)
+    groups: dict[tuple[str, str, str], dict[str, str]] = {}
     for key, val in local_kv.items():
         entry = lock_entries.get(key)
         if entry is None:
@@ -171,12 +173,12 @@ def push_env(
                 stacklevel=2,
             )
             continue
-        group_key = (entry.secret, entry.project)
+        group_key = (entry.secret, entry.provider, entry.project or entry.region or "")
         groups.setdefault(group_key, {})[key] = val
 
     results: dict[str, DiffResult] = {}
 
-    for (secret_name, project), local_group in groups.items():
+    for (secret_name, provider, _location), local_group in groups.items():
         # Determine format from lock
         fmt: SecretFormat = "json"
         for key in local_group:
@@ -185,9 +187,11 @@ def push_env(
                 fmt = entry.format
                 break
 
-        # Fetch remote
-        raw_remote = fetch_secret_latest(project, secret_name)
-        secret_ref = _find_secret_ref(env_cfg, secret_name, project)
+        # Fetch remote using the provider from lock entries
+        sample_entry = lock_entries[next(iter(local_group))]
+        remote_provider = get_provider_for_lock_entry(sample_entry)
+        raw_remote = remote_provider.fetch_latest(secret_name)
+        secret_ref = _find_secret_ref(env_cfg, secret_name, provider, sample_entry.project, sample_entry.region)
         remote_kv_all = parse_secret(raw_remote, fmt, secret_ref) if secret_ref else {}
 
         # Only compare keys that belong to this secret
@@ -207,15 +211,24 @@ def push_env(
             new_kv.pop(k, None)
 
         payload = serialize_secret(new_kv, fmt)
-        push_secret_version(project, secret_name, payload)
+        remote_provider.push_version(secret_name, payload)
 
     return results
 
 
-def _find_secret_ref(env_cfg: EnvConfig, secret_name: str, project: str) -> SecretRef | None:
+def _find_secret_ref(
+    env_cfg: EnvConfig,
+    secret_name: str,
+    provider: str,
+    project: str,
+    region: str | None,
+) -> SecretRef | None:
     for ref in env_cfg.secrets:
-        if ref.secret == secret_name and ref.project == project:
-            return ref
+        if ref.secret == secret_name and ref.provider == provider:
+            if provider == "gcp" and ref.project == project:
+                return ref
+            if provider == "aws" and ref.region == region:
+                return ref
     return None
 
 

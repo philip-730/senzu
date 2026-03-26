@@ -29,12 +29,12 @@ from .exceptions import (
     SenzuError,
 )
 from .formats import SecretFormat, detect_format, parse_secret, serialize_secret
-from .gcp import ensure_secret_exists, fetch_secret_latest, push_secret_version
 from .lock import LockData, LockEntry, load_lock, save_lock
+from .providers.factory import get_provider_for_ref
 
 app = typer.Typer(
     name="senzu",
-    help="Secret env sync for GCP teams.",
+    help="Secret env sync for cloud teams.",
     add_completion=False,
 )
 console = Console()
@@ -62,12 +62,13 @@ def _print_diff(dr: DiffResult, lock_entries: dict[str, LockEntry] | None = None
     table.add_column("Key")
     table.add_column("Change")
     table.add_column("Secret")
-    table.add_column("Project")
+    table.add_column("Location")
 
     def _lock(key: str) -> tuple[str, str]:
         if lock_entries and key in lock_entries:
             e = lock_entries[key]
-            return e.secret, e.project
+            location = f"aws:{e.region}" if e.provider == "aws" else f"gcp:{e.project}"
+            return e.secret, location
         return "—", "—"
 
     untracked: list[str] = []
@@ -130,7 +131,8 @@ def pull(
             err_console.print(f"[red]Error:[/red] Unknown env '{env_name}'.")
             raise typer.Exit(1)
 
-        console.print(f"Pulling [bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]...")
+        _loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+        console.print(f"Pulling [bold]{env_name}[/bold]  [dim]({_loc})[/dim]...")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", KeyCollisionWarning)
@@ -214,7 +216,8 @@ def push(
                 f"[yellow]Warning:[/yellow] {env_cfg.file} is empty or missing."
             )
 
-        console.print(f"\nPushing [bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]")
+        _loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+        console.print(f"\nPushing [bold]{env_name}[/bold]  [dim]({_loc})[/dim]")
         console.print(f"Comparing local [cyan]{env_cfg.file}[/cyan] with remote...")
 
         try:
@@ -305,7 +308,8 @@ def diff(
         dr = diff_env(local_kv, remote_kv)
         lock_entries = lock_data.get(env_name, {})
 
-        console.print(f"\n[bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]  {env_cfg.file}")
+        _loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+        console.print(f"\n[bold]{env_name}[/bold]  [dim]({_loc})[/dim]  {env_cfg.file}")
         if not dr.has_drift:
             console.print("  [dim]No differences.[/dim]")
         else:
@@ -323,13 +327,13 @@ def diff(
 
 @app.command()
 def status() -> None:
-    """Show all envs, GCP projects, secrets, and whether local files exist."""
+    """Show all envs, providers, secrets, and whether local files exist."""
     root = _root()
     cfg = _cfg(root)
 
     table = Table(title="Senzu Status", show_lines=True)
     table.add_column("Env", style="bold")
-    table.add_column("GCP Project")
+    table.add_column("Location")
     table.add_column("Secret")
     table.add_column("Local File")
     table.add_column("File Exists")
@@ -338,15 +342,17 @@ def status() -> None:
         env_path = root / env_cfg.file
         file_exists = "[green]yes[/green]" if env_path.exists() else "[red]no[/red]"
         for i, secret_ref in enumerate(env_cfg.secrets):
+            loc = f"aws:{secret_ref.region}" if secret_ref.provider == "aws" else f"gcp:{secret_ref.project}"
             table.add_row(
                 env_name if i == 0 else "",
-                secret_ref.project,
+                loc,
                 secret_ref.secret,
                 env_cfg.file if i == 0 else "",
                 file_exists if i == 0 else "",
             )
         if not env_cfg.secrets:
-            table.add_row(env_name, env_cfg.project, "(none)", env_cfg.file, file_exists)
+            env_loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+            table.add_row(env_name, env_loc, "(none)", env_cfg.file, file_exists)
 
     console.print(table)
 
@@ -358,7 +364,9 @@ def status() -> None:
 
 @app.command()
 def init(
+    provider: Optional[str] = typer.Option(None, "--provider", help="Cloud provider: gcp or aws (default: gcp)."),
     project: Optional[str] = typer.Option(None, "--project", help="GCP project ID."),
+    region: Optional[str] = typer.Option(None, "--region", help="AWS region (e.g. us-east-1)."),
     file: Optional[str] = typer.Option(None, "--file", help="Local .env file path."),
     secret: Optional[str] = typer.Option(None, "--secret", help="Secret name in Secret Manager."),
     env: str = typer.Option("dev", "--env", help="Environment name (default: dev)."),
@@ -369,15 +377,28 @@ def init(
         console.print("[yellow]senzu.toml already exists.[/yellow] Skipping scaffold.")
     else:
         console.print(f"Let's create a [cyan]senzu.toml[/cyan] for env [bold]{env}[/bold].")
-        if project is None:
+        if provider is None:
+            provider = typer.prompt("Cloud provider", default="gcp")
+        if provider not in ("gcp", "aws"):
+            err_console.print(f"[red]Error:[/red] Unknown provider '{provider}'. Use 'gcp' or 'aws'.")
+            raise typer.Exit(1)
+        if provider == "gcp" and project is None:
             project = typer.prompt(f"GCP project ID for '{env}'")
+        if provider == "aws" and region is None:
+            region = typer.prompt(f"AWS region for '{env}'", default="us-east-1")
         if file is None:
             file = typer.prompt(f"Local .env file for '{env}'", default=f".env.{env}")
         if secret is None:
             secret = typer.prompt("Secret name in Secret Manager", default="app-env")
 
+        if provider == "gcp":
+            location_line = f'project = "{project}"'
+        else:
+            location_line = f'region  = "{region}"'
+
         toml_content = f"""[envs.{env}]
-project = "{project}"
+provider = "{provider}"
+{location_line}
 file    = "{file}"
 secrets = [
   {{ secret = "{secret}" }}
@@ -385,7 +406,8 @@ secrets = [
 
 # Add more envs below, e.g.:
 # [envs.prod]
-# project = "my-app-prod-456"
+# provider = "{provider}"
+# {location_line}
 # file    = ".env.prod"
 # secrets = [
 #   {{ secret = "app-env" }}
@@ -468,7 +490,8 @@ def _route_keys_interactively(
 
     console.print("\nConfigured secrets:")
     for i, s in enumerate(secrets, 1):
-        console.print(f"  {i}. {s.secret}  [dim]({s.project})[/dim]")
+        loc = f"aws:{s.region}" if s.provider == "aws" else f"gcp:{s.project}"
+        console.print(f"  {i}. {s.secret}  [dim]({loc})[/dim]")
 
     hint = "/".join(str(i) for i in range(1, len(options) + 1))
     default_raw = typer.prompt(
@@ -585,7 +608,7 @@ def import_cmd(
         ref = ref_by_name[secret_name]
         resolved_fmt_cache[secret_name] = fmt or ref.format or "dotenv"  # type: ignore[assignment]
         try:
-            raw_remote = fetch_secret_latest(ref.project, ref.secret)
+            raw_remote = get_provider_for_ref(ref).fetch_latest(ref.secret)
             remote_fmt = detect_format(raw_remote, ref.format)
             remote_cache[secret_name] = parse_secret(raw_remote, remote_fmt, ref)
         except SenzuError:
@@ -611,20 +634,22 @@ def import_cmd(
         raise typer.Exit(0)
 
     # Show diff-style summary
-    console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]  [dim]({env_cfg.project})[/dim]")
+    _env_loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+    console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]  [dim]({_env_loc})[/dim]")
     import_table = Table(box=box.SIMPLE, show_header=True, header_style="bold dim", pad_edge=False)
     import_table.add_column("Key")
     import_table.add_column("Status")
     import_table.add_column("Secret")
-    import_table.add_column("Project")
+    import_table.add_column("Location")
     for secret_name, (new_keys, changed_keys, unchanged_keys) in group_diffs.items():
         ref = ref_by_name[secret_name]
+        ref_loc = f"aws:{ref.region}" if ref.provider == "aws" else f"gcp:{ref.project}"
         for k in sorted(new_keys):
-            import_table.add_row(f"[green]{k}[/green]", "[green]new[/green]", secret_name, ref.project)
+            import_table.add_row(f"[green]{k}[/green]", "[green]new[/green]", secret_name, ref_loc)
         for k in sorted(changed_keys):
-            import_table.add_row(f"[yellow]{k}[/yellow]", "[yellow]changed[/yellow]", secret_name, ref.project)
+            import_table.add_row(f"[yellow]{k}[/yellow]", "[yellow]changed[/yellow]", secret_name, ref_loc)
         for k in sorted(unchanged_keys):
-            import_table.add_row(f"[dim]{k}[/dim]", "[dim]unchanged[/dim]", f"[dim]{secret_name}[/dim]", f"[dim]{ref.project}[/dim]")
+            import_table.add_row(f"[dim]{k}[/dim]", "[dim]unchanged[/dim]", f"[dim]{secret_name}[/dim]", f"[dim]{ref_loc}[/dim]")
     console.print(import_table)
 
     if not force:
@@ -654,9 +679,10 @@ def import_cmd(
         merged_kv = {**remote_kv, **group_kv}
 
         try:
-            ensure_secret_exists(ref.project, ref.secret)
+            provider_inst = get_provider_for_ref(ref)
+            provider_inst.ensure_exists(ref.secret)
             payload = serialize_secret(merged_kv, resolved_fmt)
-            push_secret_version(ref.project, ref.secret, payload)
+            provider_inst.push_version(ref.secret, payload)
         except SenzuError as exc:
             err_console.print(f"[red]Error:[/red] {exc}")
             raise typer.Exit(1)
@@ -666,6 +692,8 @@ def import_cmd(
             env_lock[key] = LockEntry(
                 secret=ref.secret,
                 project=ref.project,
+                provider=ref.provider,
+                region=ref.region,
                 format=resolved_fmt,
                 type=ref.type,
             )

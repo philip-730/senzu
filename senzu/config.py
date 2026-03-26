@@ -15,7 +15,9 @@ CONFIG_FILENAME = "senzu.toml"
 @dataclass
 class SecretRef:
     secret: str
-    project: str  # resolved — always has a value after loading
+    project: str  # resolved — GCP project ID (empty string for AWS)
+    provider: str = "gcp"  # "gcp" | "aws"
+    region: str | None = None  # AWS region
     format: Literal["json", "dotenv"] | None = None  # None = auto-detect
     type: Literal["raw"] | None = None  # None = env-style (key/value map)
     env_var: str | None = None  # only used when type="raw"
@@ -24,8 +26,10 @@ class SecretRef:
 @dataclass
 class EnvConfig:
     name: str
-    project: str
+    project: str  # GCP project (empty string for AWS)
     file: str
+    provider: str = "gcp"  # "gcp" | "aws"
+    region: str | None = None  # AWS region
     secrets: list[SecretRef] = field(default_factory=list)
 
 
@@ -62,10 +66,23 @@ def load_config(root: Path | None = None) -> SenzuConfig:
                 f"{CONFIG_FILENAME}: 'envs.{env_name}' must be a table."
             )
 
-        default_project = env_data.get("project")
-        if not default_project:
+        default_provider = env_data.get("provider", "gcp")
+        if default_provider not in ("gcp", "aws"):
             raise ConfigParseError(
-                f"{CONFIG_FILENAME}: 'envs.{env_name}.project' is required."
+                f"{CONFIG_FILENAME}: unknown provider '{default_provider}' in 'envs.{env_name}'. "
+                "Supported providers: gcp, aws."
+            )
+
+        default_project = env_data.get("project", "")
+        default_region = env_data.get("region")
+
+        if default_provider == "gcp" and not default_project:
+            raise ConfigParseError(
+                f"{CONFIG_FILENAME}: 'envs.{env_name}.project' is required for provider 'gcp'."
+            )
+        if default_provider == "aws" and not default_region:
+            raise ConfigParseError(
+                f"{CONFIG_FILENAME}: 'envs.{env_name}.region' is required for provider 'aws'."
             )
 
         env_file = env_data.get("file")
@@ -109,10 +126,33 @@ def load_config(root: Path | None = None) -> SenzuConfig:
                     f"secrets in 'envs.{env_name}'."
                 )
 
+            secret_provider = s.get("provider", default_provider)
+            if secret_provider not in ("gcp", "aws"):
+                raise ConfigParseError(
+                    f"{CONFIG_FILENAME}: unknown provider '{secret_provider}' in "
+                    f"'envs.{env_name}.secrets'. Supported providers: gcp, aws."
+                )
+
+            secret_project = s.get("project", default_project if secret_provider == "gcp" else "")
+            secret_region = s.get("region", default_region if secret_provider == "aws" else None)
+
+            if secret_provider == "gcp" and not secret_project:
+                raise ConfigParseError(
+                    f"{CONFIG_FILENAME}: 'project' is required for provider 'gcp' "
+                    f"in 'envs.{env_name}.secrets'."
+                )
+            if secret_provider == "aws" and not secret_region:
+                raise ConfigParseError(
+                    f"{CONFIG_FILENAME}: 'region' is required for provider 'aws' "
+                    f"in 'envs.{env_name}.secrets'."
+                )
+
             secrets.append(
                 SecretRef(
                     secret=s["secret"],
-                    project=s.get("project", default_project),
+                    project=secret_project,
+                    provider=secret_provider,
+                    region=secret_region,
                     format=secret_format,
                     type=secret_type,
                     env_var=env_var,
@@ -123,6 +163,8 @@ def load_config(root: Path | None = None) -> SenzuConfig:
             name=env_name,
             project=default_project,
             file=env_file,
+            provider=default_provider,
+            region=default_region,
             secrets=secrets,
         )
 

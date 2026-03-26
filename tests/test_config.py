@@ -129,6 +129,72 @@ def test_missing_project_raises(tmp_path):
         load_config(tmp_path)
 
 
+def test_gcp_provider_explicit(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"provider": "gcp", "project": "my-proj", "file": ".env.dev", "secrets": []}}},
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.envs["dev"].provider == "gcp"
+    assert cfg.envs["dev"].project == "my-proj"
+
+
+def test_aws_provider_config(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"staging": {"provider": "aws", "region": "us-east-1", "file": ".env.staging", "secrets": [{"secret": "myapp/env"}]}}},
+    )
+    cfg = load_config(tmp_path)
+    env = cfg.envs["staging"]
+    assert env.provider == "aws"
+    assert env.region == "us-east-1"
+    assert env.secrets[0].provider == "aws"
+    assert env.secrets[0].region == "us-east-1"
+
+
+def test_aws_missing_region_raises(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"provider": "aws", "file": ".env.dev", "secrets": []}}},
+    )
+    with pytest.raises(ConfigParseError, match="region"):
+        load_config(tmp_path)
+
+
+def test_unknown_provider_raises(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"provider": "azure", "file": ".env.dev", "secrets": []}}},
+    )
+    with pytest.raises(ConfigParseError, match="provider"):
+        load_config(tmp_path)
+
+
+def test_per_secret_provider_override(tmp_path):
+    write_toml(
+        tmp_path,
+        {
+            "envs": {
+                "prod": {
+                    "provider": "gcp",
+                    "project": "my-proj",
+                    "file": ".env.prod",
+                    "secrets": [
+                        {"secret": "app-env"},
+                        {"secret": "shared-key", "provider": "aws", "region": "us-east-1"},
+                    ],
+                }
+            }
+        },
+    )
+    cfg = load_config(tmp_path)
+    secrets = cfg.envs["prod"].secrets
+    assert secrets[0].provider == "gcp"
+    assert secrets[0].project == "my-proj"
+    assert secrets[1].provider == "aws"
+    assert secrets[1].region == "us-east-1"
+
+
 def test_missing_file_raises(tmp_path):
     write_toml(tmp_path, {"envs": {"dev": {"project": "p", "secrets": []}}})
     with pytest.raises(ConfigParseError, match="file"):
