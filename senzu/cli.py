@@ -145,7 +145,9 @@ def pull(
 
         env_path = root / env_cfg.file
 
-        if not overwrite and env_path.exists():
+        is_first_pull = not env_path.exists()
+
+        if not overwrite and not is_first_pull:
             local_kv = read_env_file(env_path)
             local_only = {k: v for k, v in local_kv.items() if k not in merged}
             if local_only:
@@ -159,7 +161,10 @@ def pull(
 
         write_env_file(env_path, final_kv)
         lock_data[env_name] = lock_entries
-        console.print(f"  Wrote {len(final_kv)} keys to [cyan]{env_cfg.file}[/cyan]")
+        if is_first_pull:
+            console.print(f"  Created [cyan]{env_cfg.file}[/cyan] with {len(final_kv)} keys")
+        else:
+            console.print(f"  Updated [cyan]{env_cfg.file}[/cyan] — {len(final_kv)} keys")
 
     save_lock(root, lock_data)
     console.print(f"  Lock file updated: [cyan]senzu.lock[/cyan]")
@@ -240,13 +245,9 @@ def push(
 
         # Confirmation prompt
         if not force:
-            console.print(
-                f"\nPush? A new secret version will be created. "
-                f"Type env name to confirm: ",
-                end="",
-            )
-            answer = input().strip()
-            if answer != env_name:
+            console.print(f"\nPush to [bold]{env_name}[/bold]? A new secret version will be created. [y/N] ", end="")
+            answer = input().strip().lower()
+            if answer != "y":
                 console.print("Aborted.")
                 raise typer.Exit(0)
 
