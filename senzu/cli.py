@@ -103,7 +103,7 @@ def pull(
             err_console.print(f"[red]Error:[/red] Unknown env '{env_name}'.")
             raise typer.Exit(1)
 
-        console.print(f"Pulling [bold]{env_name}[/bold]...")
+        console.print(f"Pulling [bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]...")
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", KeyCollisionWarning)
@@ -182,7 +182,8 @@ def push(
                 f"[yellow]Warning:[/yellow] {env_cfg.file} is empty or missing."
             )
 
-        console.print(f"\nComparing local [cyan]{env_cfg.file}[/cyan] with remote...")
+        console.print(f"\nPushing [bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]")
+        console.print(f"Comparing local [cyan]{env_cfg.file}[/cyan] with remote...")
 
         try:
             remote_kv = fetch_remote_kv(env_cfg)
@@ -575,7 +576,7 @@ def import_cmd(
         raise typer.Exit(0)
 
     # Show diff-style summary
-    console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]")
+    console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]  [dim]({env_cfg.project})[/dim]")
     for secret_name, (new_keys, changed_keys, unchanged_keys) in group_diffs.items():
         ref = ref_by_name[secret_name]
         parts = []
