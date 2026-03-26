@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
-from rich import print as rprint
 
 from .config import load_config, find_config_root
 from .core import (
@@ -57,14 +57,30 @@ def _cfg(root: Path):
         raise typer.Exit(1)
 
 
-def _print_diff(dr: DiffResult, secret_label: str = "") -> None:
-    prefix = f"  [{secret_label}] " if secret_label else "  "
+def _print_diff(dr: DiffResult, lock_entries: dict[str, LockEntry] | None = None) -> None:
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold dim", pad_edge=False)
+    table.add_column("Key")
+    table.add_column("Change")
+    table.add_column("Secret")
+    table.add_column("Project")
+
+    def _lock(key: str) -> tuple[str, str]:
+        if lock_entries and key in lock_entries:
+            e = lock_entries[key]
+            return e.secret, e.project
+        return "—", "—"
+
     for key in sorted(dr.added):
-        rprint(f"[green]{prefix}+ {key}[/green]  (local only)")
+        secret, project = _lock(key)
+        table.add_row(f"[green]{key}[/green]", "[green]local only[/green]", secret, project)
     for key in sorted(dr.removed):
-        rprint(f"[red]{prefix}- {key}[/red]  (remote only)")
+        secret, project = _lock(key)
+        table.add_row(f"[red]{key}[/red]", "[red]remote only[/red]", secret, project)
     for key in sorted(dr.changed):
-        rprint(f"[yellow]{prefix}~ {key}[/yellow]  (value changed)")
+        secret, project = _lock(key)
+        table.add_row(f"[yellow]{key}[/yellow]", "[yellow]changed[/yellow]", secret, project)
+
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -202,14 +218,14 @@ def push(
             console.print(
                 "\n[yellow]⚠ Remote has changes not in your local file:[/yellow]\n"
             )
-            _print_diff(DiffResult({}, overall_diff.removed, overall_diff.changed), "")
+            _print_diff(DiffResult({}, overall_diff.removed, overall_diff.changed), lock_entries)
             console.print(
                 "\n[yellow]Blocked.[/yellow] "
                 "Run `senzu pull` to sync first, or use --force to override."
             )
             raise typer.Exit(1)
 
-        _print_diff(overall_diff)
+        _print_diff(overall_diff, lock_entries)
 
         # Confirmation prompt
         if not force:
@@ -253,6 +269,12 @@ def diff(
     env_names = [env] if env else list(cfg.envs.keys())
     has_any_drift = False
 
+    lock_data: LockData = {}
+    try:
+        lock_data = load_lock(root)
+    except LockNotFoundError:
+        pass
+
     for env_name in env_names:
         env_cfg = cfg.envs.get(env_name)
         if env_cfg is None:
@@ -269,13 +291,14 @@ def diff(
             raise typer.Exit(1)
 
         dr = diff_env(local_kv, remote_kv)
+        lock_entries = lock_data.get(env_name, {})
 
-        console.print(f"\n[bold]{env_name}[/bold] ({env_cfg.file})")
+        console.print(f"\n[bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]  {env_cfg.file}")
         if not dr.has_drift:
             console.print("  [dim]No differences.[/dim]")
         else:
             has_any_drift = True
-            _print_diff(dr)
+            _print_diff(dr, lock_entries)
 
     if has_any_drift:
         raise typer.Exit(1)
@@ -432,8 +455,8 @@ def _route_keys_interactively(
     options = [s.secret for s in secrets]
 
     console.print("\nConfigured secrets:")
-    for i, name in enumerate(options, 1):
-        console.print(f"  {i}. {name}")
+    for i, s in enumerate(secrets, 1):
+        console.print(f"  {i}. {s.secret}  [dim]({s.project})[/dim]")
 
     hint = "/".join(str(i) for i in range(1, len(options) + 1))
     default_raw = typer.prompt(
@@ -577,22 +600,20 @@ def import_cmd(
 
     # Show diff-style summary
     console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]  [dim]({env_cfg.project})[/dim]")
+    import_table = Table(box=box.SIMPLE, show_header=True, header_style="bold dim", pad_edge=False)
+    import_table.add_column("Key")
+    import_table.add_column("Status")
+    import_table.add_column("Secret")
+    import_table.add_column("Project")
     for secret_name, (new_keys, changed_keys, unchanged_keys) in group_diffs.items():
         ref = ref_by_name[secret_name]
-        parts = []
-        if new_keys:
-            parts.append(f"[green]{len(new_keys)} new[/green]")
-        if changed_keys:
-            parts.append(f"[yellow]{len(changed_keys)} changed[/yellow]")
-        if unchanged_keys:
-            parts.append(f"[dim]{len(unchanged_keys)} unchanged[/dim]")
-        console.print(f"  → [cyan]{secret_name}[/cyan]  ({', '.join(parts)})")
         for k in sorted(new_keys):
-            console.print(f"    [green]+ {k}[/green]")
+            import_table.add_row(f"[green]{k}[/green]", "[green]new[/green]", secret_name, ref.project)
         for k in sorted(changed_keys):
-            console.print(f"    [yellow]~ {k}[/yellow]")
+            import_table.add_row(f"[yellow]{k}[/yellow]", "[yellow]changed[/yellow]", secret_name, ref.project)
         for k in sorted(unchanged_keys):
-            console.print(f"    [dim]  {k}[/dim]")
+            import_table.add_row(f"[dim]{k}[/dim]", "[dim]unchanged[/dim]", f"[dim]{secret_name}[/dim]", f"[dim]{ref.project}[/dim]")
+    console.print(import_table)
 
     if not force:
         secrets_list = ", ".join(f"[cyan]{n}[/cyan]" for n in groups)
