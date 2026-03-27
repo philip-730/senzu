@@ -11,6 +11,15 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "philip-730" }]
 keywords = ["gcp", "secrets", "env", "dotenv", "secret-manager"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/philip-730/senzu"
 dependencies = [
     "typer>=0.12",
     "rich>=13",
