@@ -1,0 +1,3 @@
+ignore:
+  - "senzu/commands/**"
+  - "senzu/cli.py"
