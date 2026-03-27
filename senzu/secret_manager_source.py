@@ -7,10 +7,10 @@ from pydantic_settings import PydanticBaseSettingsSource
 
 
 class SecretManagerSettingsSource(PydanticBaseSettingsSource):
-    """Pydantic settings source that reads directly from GCP Secret Manager.
+    """Pydantic settings source that reads secrets from the configured cloud provider.
 
     Used when SENZU_USE_SECRET_MANAGER=true (Cloud Run / production environments
-    where no .env file is present).
+    where no .env file is present). Supports GCP and AWS based on senzu.toml config.
     """
 
     def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
