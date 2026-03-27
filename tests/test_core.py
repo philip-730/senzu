@@ -125,6 +125,26 @@ def test_serialize_dotenv():
     assert "URL=https://example.com" in text
 
 
+def test_serialize_dotenv_quotes_special_chars():
+    kv = {"MSG": "hello world", "HASH": "val#ue"}
+    text = serialize_secret(kv, "dotenv").decode()
+    assert 'MSG="hello world"' in text
+    assert 'HASH="val#ue"' in text
+
+
+def test_serialize_json_invalid_single_quoted_falls_back_to_string():
+    # Single-quoted but inner text is not valid JSON — stored as the literal string
+    kv = {"KEY": "'not-valid-json'"}
+    result = json.loads(serialize_secret(kv, "json").decode())
+    assert result["KEY"] == "'not-valid-json'"
+
+
+def test_parse_raw_type_non_json_stores_raw_text():
+    ref = _ref(type="raw", env_var="CERT")
+    kv = parse_secret(b"plain-text-not-json", "json", ref)
+    assert kv["CERT"] == "plain-text-not-json"
+
+
 # ---------------------------------------------------------------------------
 # diff_env
 # ---------------------------------------------------------------------------
@@ -348,3 +368,101 @@ def test_push_env_with_drift_pushes(mocker, tmp_path):
     push_mock.assert_called_once()
     assert results["app-env"].has_drift
     assert "DB" in results["app-env"].changed
+
+
+def test_push_env_key_not_in_lock_warns(mocker, tmp_path):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"DB": "pg://..."}')
+    mocker.patch("senzu.core.push_secret_version")
+
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p")],
+    )
+    lock_entries = {"DB": LockEntry(secret="app-env", project="p", format="json")}
+
+    # UNTRACKED is in local but absent from lock — should warn and be skipped
+    with pytest.warns(UserWarning, match="UNTRACKED"):
+        push_env(env_cfg, {"DB": "pg://...", "UNTRACKED": "value"}, lock_entries, tmp_path)
+
+
+def test_push_env_removes_deleted_keys(mocker, tmp_path):
+    mocker.patch(
+        "senzu.core.fetch_secret_latest",
+        return_value=b'{"DB": "pg://old", "STALE": "remove-me"}',
+    )
+    push_mock = mocker.patch("senzu.core.push_secret_version")
+
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p")],
+    )
+    lock_entries = {
+        "DB": LockEntry(secret="app-env", project="p", format="json"),
+        "STALE": LockEntry(secret="app-env", project="p", format="json"),
+    }
+
+    # Local only has DB — STALE was intentionally deleted
+    push_env(env_cfg, {"DB": "pg://new"}, lock_entries, tmp_path)
+
+    push_mock.assert_called_once()
+    payload = json.loads(push_mock.call_args[0][2].decode())
+    assert "STALE" not in payload
+    assert payload["DB"] == "pg://new"
+
+
+def test_push_env_unrecognized_secret_ref(mocker, tmp_path):
+    # Lock entry points to a secret not listed in env_cfg.secrets → _find_secret_ref returns None
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"DB": "pg://old"}')
+    mocker.patch("senzu.core.push_secret_version")
+
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p")],
+    )
+    lock_entries = {"DB": LockEntry(secret="other-secret", project="p", format="json")}
+
+    results = push_env(env_cfg, {"DB": "pg://new"}, lock_entries, tmp_path)
+    # Drift is detected (remote_kv_all={} so DB appears as added)
+    assert results["other-secret"].has_drift
+
+
+# ---------------------------------------------------------------------------
+# write_env_file — double-quoted value branch
+# ---------------------------------------------------------------------------
+
+
+def test_write_env_file_double_quoted_value(tmp_path):
+    path = tmp_path / ".env.dev"
+    write_env_file(path, {"KEY": '"already-quoted"'})
+    content = path.read_text()
+    assert 'KEY="already-quoted"' in content
+    assert read_env_file(path)["KEY"] == "already-quoted"
+
+
+# ---------------------------------------------------------------------------
+# pull_env — raw type secret
+# ---------------------------------------------------------------------------
+
+
+def test_pull_env_raw_type(mocker, tmp_path):
+    mocker.patch("senzu.core.fetch_secret_latest", return_value=b'{"type":"service_account"}')
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="firebase", project="p", type="raw", env_var="FIREBASE_CREDS")],
+    )
+    merged, lock_entries = pull_env(env_cfg, tmp_path)
+
+    assert "FIREBASE_CREDS" in merged
+    assert merged["FIREBASE_CREDS"].startswith("'")
+    assert lock_entries["FIREBASE_CREDS"].type == "raw"
+
+
+# ---------------------------------------------------------------------------
+# generate_settings_source — empty kv
+# ---------------------------------------------------------------------------
+
+
+def test_generate_settings_source_empty_kv():
+    src = generate_settings_source("dev", {})
+    assert "class Settings(SenzuSettings):" in src
+    assert "pass" in src
