@@ -359,3 +359,53 @@ def test_push_env_with_drift_pushes(mocker, tmp_path):
     mock.push_version.assert_called_once()
     assert results["app-env"].has_drift
     assert "DB" in results["app-env"].changed
+
+
+def test_push_env_groups_by_provider_not_just_secret_name(mocker, tmp_path):
+    """Keys in secrets with the same name but different providers must be pushed separately."""
+    gcp_mock = mocker.MagicMock()
+    gcp_mock.fetch_latest.return_value = b'{"GCP_KEY": "old"}'
+    aws_mock = mocker.MagicMock()
+    aws_mock.fetch_latest.return_value = b'{"AWS_KEY": "old"}'
+
+    def factory_side_effect(entry):
+        return gcp_mock if entry.provider == "gcp" else aws_mock
+
+    mocker.patch("senzu.core.get_provider_for_ref", side_effect=lambda ref: gcp_mock if ref.provider == "gcp" else aws_mock)
+    mocker.patch("senzu.core.get_provider_for_lock_entry", side_effect=factory_side_effect)
+
+    env_cfg = EnvConfig(
+        name="prod", project="p", file=".env.prod",
+        secrets=[
+            SecretRef(secret="app-env", project="p", provider="gcp"),
+            SecretRef(secret="app-env", project="", provider="aws", region="us-east-1"),
+        ],
+    )
+    lock_entries = {
+        "GCP_KEY": LockEntry(secret="app-env", project="p", provider="gcp", format="json"),
+        "AWS_KEY": LockEntry(secret="app-env", project="", provider="aws", region="us-east-1", format="json"),
+    }
+
+    push_env(env_cfg, {"GCP_KEY": "new-gcp", "AWS_KEY": "new-aws"}, lock_entries, tmp_path)
+
+    # Each provider's push_version should be called once, on its own mock
+    gcp_mock.push_version.assert_called_once()
+    aws_mock.push_version.assert_called_once()
+
+
+def test_push_env_key_missing_from_lock_warns(mocker, tmp_path):
+    _mock_provider(mocker, fetch_return=b'{"DB": "pg://..."}')
+
+    env_cfg = EnvConfig(
+        name="dev", project="p", file=".env.dev",
+        secrets=[SecretRef(secret="app-env", project="p", provider="gcp")],
+    )
+    lock_entries = {"DB": LockEntry(secret="app-env", project="p", provider="gcp", format="json")}
+
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        push_env(env_cfg, {"DB": "pg://...", "ORPHAN": "val"}, lock_entries, tmp_path)
+
+    messages = [str(w.message) for w in caught]
+    assert any("ORPHAN" in m for m in messages)
