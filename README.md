@@ -1,5 +1,11 @@
 # senzu
 
+[![PyPI version](https://img.shields.io/pypi/v/senzu)](https://pypi.org/project/senzu/)
+[![CI](https://github.com/philip-730/senzu/actions/workflows/ci.yml/badge.svg)](https://github.com/philip-730/senzu/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/senzu)](https://pypi.org/project/senzu/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI downloads](https://img.shields.io/pypi/dm/senzu)](https://pypi.org/project/senzu/)
+
 Stop manually copy-pasting secrets from GCP Secret Manager into `.env` files like an animal. Senzu syncs secrets between GCP Secret Manager and local `.env` files, tracks where every key came from, and won't let you blow up production by pushing stale local changes over remote ones.
 
 It's a CLI + Python library for teams using GCP Secret Manager who need their secrets to actually stay in sync — across multiple environments, multiple secrets, multiple people.
