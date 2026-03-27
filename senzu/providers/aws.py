@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..exceptions import SecretFetchError, SecretPushError
+from ..exceptions import ProviderNotInstalledError, SecretFetchError, SecretPushError, SenzuError
 
 
 class AwsProvider:
@@ -13,7 +13,7 @@ class AwsProvider:
             try:
                 import boto3  # type: ignore
             except ImportError:
-                raise RuntimeError(
+                raise ProviderNotInstalledError(
                     "AWS support requires 'boto3'. "
                     "Install it with:  pip install senzu[aws]"
                 )
@@ -26,7 +26,7 @@ class AwsProvider:
             if "SecretBinary" in resp:
                 return resp["SecretBinary"]
             return resp["SecretString"].encode()
-        except (RuntimeError, ImportError):
+        except SenzuError:
             raise
         except Exception as exc:
             raise SecretFetchError(
@@ -39,7 +39,7 @@ class AwsProvider:
                 SecretId=secret_name,
                 SecretString=payload.decode(),
             )
-        except (RuntimeError, ImportError):
+        except SenzuError:
             raise
         except Exception as exc:
             raise SecretPushError(
@@ -52,7 +52,7 @@ class AwsProvider:
                 Name=secret_name,
                 SecretString="",
             )
-        except (RuntimeError, ImportError):
+        except SenzuError:
             raise
         except Exception as exc:
             try:

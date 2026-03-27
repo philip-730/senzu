@@ -14,6 +14,10 @@ class LockNotFoundError(SenzuError):
     """senzu.lock not found — user needs to pull first."""
 
 
+class ProviderNotInstalledError(SenzuError):
+    """Required cloud provider SDK is not installed."""
+
+
 class SecretFetchError(SenzuError):
     """Failed to fetch a secret from Secret Manager."""
 

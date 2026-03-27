@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..exceptions import SecretFetchError, SecretPushError
+from ..exceptions import ProviderNotInstalledError, SecretFetchError, SecretPushError, SenzuError
 
 
 class GcpProvider:
@@ -11,7 +11,7 @@ class GcpProvider:
         try:
             from google.cloud import secretmanager  # type: ignore
         except ImportError:
-            raise RuntimeError(
+            raise ProviderNotInstalledError(
                 "GCP support requires 'google-cloud-secret-manager'. "
                 "Install it with:  pip install senzu[gcp]"
             )
@@ -23,7 +23,7 @@ class GcpProvider:
             name = f"projects/{self._project}/secrets/{secret_name}/versions/latest"
             response = client.access_secret_version(request={"name": name})
             return response.payload.data
-        except (RuntimeError, ImportError):
+        except SenzuError:
             raise
         except Exception as exc:
             raise SecretFetchError(
@@ -37,7 +37,7 @@ class GcpProvider:
             client.add_secret_version(
                 request={"parent": parent, "payload": {"data": payload}}
             )
-        except (RuntimeError, ImportError):
+        except SenzuError:
             raise
         except Exception as exc:
             raise SecretPushError(
@@ -54,7 +54,7 @@ class GcpProvider:
                     "secret": {"replication": {"automatic": {}}},
                 }
             )
-        except (RuntimeError, ImportError):
+        except SenzuError:
             raise
         except Exception as exc:
             from google.api_core.exceptions import AlreadyExists  # type: ignore
