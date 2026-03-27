@@ -38,26 +38,10 @@ Senzu fixes this:
 
 ## Install
 
-Senzu isn't on PyPI yet. Install directly from GitHub:
-
 ```bash
-pip install git+https://github.com/philip-730/senzu
+pip install senzu
 # or
-uv add git+https://github.com/philip-730/senzu
-```
-
-Pin to a specific commit or tag if you need stability:
-
-```bash
-pip install git+https://github.com/philip-730/senzu@v0.1.0
-```
-
-To add it to `requirements.txt`:
-
-```
-senzu @ git+https://github.com/philip-730/senzu
-# or pinned:
-senzu @ git+https://github.com/philip-730/senzu@v0.1.0
+uv add senzu
 ```
 
 Requires Python 3.10+. You'll need GCP credentials set up — either `gcloud auth application-default login` locally or a service account in prod.
