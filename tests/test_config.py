@@ -158,3 +158,57 @@ def test_find_config_root_not_found(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ConfigNotFoundError):
         find_config_root()
+
+
+# ---------------------------------------------------------------------------
+# load_config edge cases (missing coverage)
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_root_none_uses_cwd(tmp_path, monkeypatch):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"project": "p", "file": ".env.dev", "secrets": []}}},
+    )
+    monkeypatch.chdir(tmp_path)
+    cfg = load_config(root=None)
+    assert "dev" in cfg.envs
+
+
+def test_envs_not_a_dict_raises(tmp_path):
+    (tmp_path / "senzu.toml").write_text('envs = "bad"')
+    with pytest.raises(ConfigParseError, match="must be a table"):
+        load_config(tmp_path)
+
+
+def test_env_entry_not_a_dict_raises(tmp_path):
+    (tmp_path / "senzu.toml").write_text('[envs]\ndev = "bad"')
+    with pytest.raises(ConfigParseError, match="must be a table"):
+        load_config(tmp_path)
+
+
+def test_secrets_not_a_list_raises(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"project": "p", "file": ".env.dev", "secrets": "bad"}}},
+    )
+    with pytest.raises(ConfigParseError, match="must be an array"):
+        load_config(tmp_path)
+
+
+def test_secret_missing_secret_key_raises(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"project": "p", "file": ".env.dev", "secrets": [{"format": "json"}]}}},
+    )
+    with pytest.raises(ConfigParseError, match="'secret' key"):
+        load_config(tmp_path)
+
+
+def test_unknown_type_raises(tmp_path):
+    write_toml(
+        tmp_path,
+        {"envs": {"dev": {"project": "p", "file": ".env.dev", "secrets": [{"secret": "s", "type": "weird"}]}}},
+    )
+    with pytest.raises(ConfigParseError, match="type"):
+        load_config(tmp_path)
