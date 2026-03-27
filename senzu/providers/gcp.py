@@ -6,20 +6,23 @@ from ..exceptions import ProviderNotInstalledError, SecretFetchError, SecretPush
 class GcpProvider:
     def __init__(self, project: str) -> None:
         self._project = project
+        self._client = None
 
-    def _client(self):
-        try:
-            from google.cloud import secretmanager  # type: ignore
-        except ImportError:
-            raise ProviderNotInstalledError(
-                "GCP support requires 'google-cloud-secret-manager'. "
-                "Install it with:  pip install senzu[gcp]"
-            )
-        return secretmanager.SecretManagerServiceClient()
+    def _get_client(self):
+        if self._client is None:
+            try:
+                from google.cloud import secretmanager  # type: ignore
+            except ImportError:
+                raise ProviderNotInstalledError(
+                    "GCP support requires 'google-cloud-secret-manager'. "
+                    "Install it with:  pip install senzu[gcp]"
+                )
+            self._client = secretmanager.SecretManagerServiceClient()
+        return self._client
 
     def fetch_latest(self, secret_name: str) -> bytes:
         try:
-            client = self._client()
+            client = self._get_client()
             name = f"projects/{self._project}/secrets/{secret_name}/versions/latest"
             response = client.access_secret_version(request={"name": name})
             return response.payload.data
@@ -32,7 +35,7 @@ class GcpProvider:
 
     def push_version(self, secret_name: str, payload: bytes) -> None:
         try:
-            client = self._client()
+            client = self._get_client()
             parent = f"projects/{self._project}/secrets/{secret_name}"
             client.add_secret_version(
                 request={"parent": parent, "payload": {"data": payload}}
@@ -46,7 +49,7 @@ class GcpProvider:
 
     def ensure_exists(self, secret_name: str) -> None:
         try:
-            client = self._client()
+            client = self._get_client()
             client.create_secret(
                 request={
                     "parent": f"projects/{self._project}",

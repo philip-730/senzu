@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
-from senzu.exceptions import SecretFetchError, SecretPushError
+from senzu.exceptions import ProviderNotInstalledError, SecretFetchError, SecretPushError
 from senzu.providers.gcp import GcpProvider
 
 
@@ -10,7 +12,7 @@ def _provider(mocker, project: str = "my-project") -> tuple[GcpProvider, object]
     """Return a GcpProvider with a mocked Secret Manager client."""
     provider = GcpProvider(project)
     mock_client = mocker.MagicMock()
-    mocker.patch.object(provider, "_client", return_value=mock_client)
+    mocker.patch.object(provider, "_get_client", return_value=mock_client)
     return provider, mock_client
 
 
@@ -108,3 +110,34 @@ def test_ensure_exists_wraps_other_errors_as_secret_push_error(mocker):
 
     with pytest.raises(SecretPushError, match="my-secret"):
         provider.ensure_exists("my-secret")
+
+
+# ---------------------------------------------------------------------------
+# client caching
+# ---------------------------------------------------------------------------
+
+
+def test_get_client_is_cached(mocker):
+    mock_client = mocker.MagicMock()
+    provider = GcpProvider("my-project")
+    provider._client = mock_client  # inject directly, bypassing the import
+
+    c1 = provider._get_client()
+    c2 = provider._get_client()
+
+    assert c1 is c2
+    assert c1 is mock_client
+
+
+def test_raises_provider_not_installed_when_sdk_missing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "google.cloud.secretmanager", None)
+
+    import google.cloud
+    if hasattr(google.cloud, "secretmanager"):
+        monkeypatch.delattr(google.cloud, "secretmanager")
+
+    provider = GcpProvider("my-project")
+    provider._client = None
+
+    with pytest.raises(ProviderNotInstalledError, match="pip install senzu\\[gcp\\]"):
+        provider._get_client()
