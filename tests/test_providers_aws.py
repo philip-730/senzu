@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -9,18 +8,12 @@ from senzu.exceptions import ProviderNotInstalledError, SecretFetchError, Secret
 from senzu.providers.aws import AwsProvider
 
 
-@pytest.fixture(autouse=True)
-def fresh_provider():
-    """Ensure each test gets a provider with no cached client."""
-    yield
-
-
 def _provider_with_mock_client(mocker, client_mock=None):
     """Return an AwsProvider whose boto3 client is replaced with a MagicMock."""
     provider = AwsProvider("us-east-1")
     if client_mock is None:
         client_mock = mocker.MagicMock()
-    provider._client = client_mock
+    mocker.patch.object(provider, "_get_client", return_value=client_mock)
     return provider, client_mock
 
 
@@ -133,26 +126,6 @@ def test_ensure_exists_wraps_other_errors_as_secret_push_error(mocker):
 
     with pytest.raises(SecretPushError, match="myapp/env"):
         provider.ensure_exists("myapp/env")
-
-
-# ---------------------------------------------------------------------------
-# client caching
-# ---------------------------------------------------------------------------
-
-
-def test_get_client_is_cached(mocker):
-    mock_boto3 = mocker.MagicMock()
-    mock_client = mocker.MagicMock()
-    mock_boto3.client.return_value = mock_client
-
-    provider = AwsProvider("us-east-1")
-
-    with patch.dict(sys.modules, {"boto3": mock_boto3}):
-        c1 = provider._get_client()
-        c2 = provider._get_client()
-
-    assert c1 is c2
-    mock_boto3.client.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -6,19 +6,16 @@ from ..exceptions import ProviderNotInstalledError, SecretFetchError, SecretPush
 class AwsProvider:
     def __init__(self, region: str) -> None:
         self._region = region
-        self._client = None
 
     def _get_client(self):
-        if self._client is None:
-            try:
-                import boto3  # type: ignore
-            except ImportError:
-                raise ProviderNotInstalledError(
-                    "AWS support requires 'boto3'. "
-                    "Install it with:  pip install senzu[aws]"
-                )
-            self._client = boto3.client("secretsmanager", region_name=self._region)
-        return self._client
+        try:
+            import boto3  # type: ignore
+        except ImportError:
+            raise ProviderNotInstalledError(
+                "AWS support requires 'boto3'. "
+                "Install it with:  pip install senzu[aws]"
+            )
+        return boto3.client("secretsmanager", region_name=self._region)
 
     def fetch_latest(self, secret_name: str) -> bytes:
         try:
