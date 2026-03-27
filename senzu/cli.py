@@ -67,7 +67,7 @@ def _print_diff(dr: DiffResult, lock_entries: dict[str, LockEntry] | None = None
     def _lock(key: str) -> tuple[str, str]:
         if lock_entries and key in lock_entries:
             e = lock_entries[key]
-            location = f"aws:{e.region}" if e.provider == "aws" else f"gcp:{e.project}"
+            location = f"aws-region:{e.region}" if e.provider == "aws" else f"gcp-project:{e.project}"
             return e.secret, location
         return "—", "—"
 
@@ -131,7 +131,7 @@ def pull(
             err_console.print(f"[red]Error:[/red] Unknown env '{env_name}'.")
             raise typer.Exit(1)
 
-        _loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+        _loc = f"aws-region:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp-project:{env_cfg.project}"
         console.print(f"Pulling [bold]{env_name}[/bold]  [dim]({_loc})[/dim]...")
 
         with warnings.catch_warnings(record=True) as caught:
@@ -216,7 +216,7 @@ def push(
                 f"[yellow]Warning:[/yellow] {env_cfg.file} is empty or missing."
             )
 
-        _loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+        _loc = f"aws-region:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp-project:{env_cfg.project}"
         console.print(f"\nPushing [bold]{env_name}[/bold]  [dim]({_loc})[/dim]")
         console.print(f"Comparing local [cyan]{env_cfg.file}[/cyan] with remote...")
 
@@ -308,7 +308,7 @@ def diff(
         dr = diff_env(local_kv, remote_kv)
         lock_entries = lock_data.get(env_name, {})
 
-        _loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+        _loc = f"aws-region:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp-project:{env_cfg.project}"
         console.print(f"\n[bold]{env_name}[/bold]  [dim]({_loc})[/dim]  {env_cfg.file}")
         if not dr.has_drift:
             console.print("  [dim]No differences.[/dim]")
@@ -342,7 +342,7 @@ def status() -> None:
         env_path = root / env_cfg.file
         file_exists = "[green]yes[/green]" if env_path.exists() else "[red]no[/red]"
         for i, secret_ref in enumerate(env_cfg.secrets):
-            loc = f"aws:{secret_ref.region}" if secret_ref.provider == "aws" else f"gcp:{secret_ref.project}"
+            loc = f"aws-region:{secret_ref.region}" if secret_ref.provider == "aws" else f"gcp-project:{secret_ref.project}"
             table.add_row(
                 env_name if i == 0 else "",
                 loc,
@@ -351,7 +351,7 @@ def status() -> None:
                 file_exists if i == 0 else "",
             )
         if not env_cfg.secrets:
-            env_loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+            env_loc = f"aws-region:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp-project:{env_cfg.project}"
             table.add_row(env_name, env_loc, "(none)", env_cfg.file, file_exists)
 
     console.print(table)
@@ -490,7 +490,7 @@ def _route_keys_interactively(
 
     console.print("\nConfigured secrets:")
     for i, s in enumerate(secrets, 1):
-        loc = f"aws:{s.region}" if s.provider == "aws" else f"gcp:{s.project}"
+        loc = f"aws-region:{s.region}" if s.provider == "aws" else f"gcp-project:{s.project}"
         console.print(f"  {i}. {s.secret}  [dim]({loc})[/dim]")
 
     hint = "/".join(str(i) for i in range(1, len(options) + 1))
@@ -634,7 +634,7 @@ def import_cmd(
         raise typer.Exit(0)
 
     # Show diff-style summary
-    _env_loc = f"aws:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp:{env_cfg.project}"
+    _env_loc = f"aws-region:{env_cfg.region}" if env_cfg.provider == "aws" else f"gcp-project:{env_cfg.project}"
     console.print(f"\nImporting from [cyan]{source_path}[/cyan] → env [bold]{env}[/bold]  [dim]({_env_loc})[/dim]")
     import_table = Table(box=box.SIMPLE, show_header=True, header_style="bold dim", pad_edge=False)
     import_table.add_column("Key")
@@ -643,7 +643,7 @@ def import_cmd(
     import_table.add_column("Location")
     for secret_name, (new_keys, changed_keys, unchanged_keys) in group_diffs.items():
         ref = ref_by_name[secret_name]
-        ref_loc = f"aws:{ref.region}" if ref.provider == "aws" else f"gcp:{ref.project}"
+        ref_loc = f"aws-region:{ref.region}" if ref.provider == "aws" else f"gcp-project:{ref.project}"
         for k in sorted(new_keys):
             import_table.add_row(f"[green]{k}[/green]", "[green]new[/green]", secret_name, ref_loc)
         for k in sorted(changed_keys):
