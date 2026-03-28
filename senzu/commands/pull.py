@@ -59,9 +59,9 @@ def register(app: typer.Typer) -> None:
             env_path = root / env_cfg.file
 
             is_first_pull = not env_path.exists()
+            local_kv = {} if is_first_pull else read_env_file(env_path)
 
             if not overwrite and not is_first_pull:
-                local_kv = read_env_file(env_path)
                 local_only = {k: v for k, v in local_kv.items() if k not in merged}
                 if local_only:
                     console.print(
@@ -77,7 +77,16 @@ def register(app: typer.Typer) -> None:
             if is_first_pull:
                 console.print(f"  Created [cyan]{env_cfg.file}[/cyan] with {len(final_kv)} keys")
             else:
-                console.print(f"  Updated [cyan]{env_cfg.file}[/cyan] — {len(final_kv)} keys")
+                new_count = sum(1 for k in merged if k not in local_kv)
+                updated_count = sum(1 for k in merged if k in local_kv and local_kv[k] != merged[k])
+                removed_count = sum(1 for k in local_kv if k not in final_kv)
+                parts = list(filter(None, [
+                    f"[green]{new_count} new[/green]" if new_count else "",
+                    f"[yellow]{updated_count} updated[/yellow]" if updated_count else "",
+                    f"[red]{removed_count} removed[/red]" if removed_count else "",
+                ]))
+                summary = ", ".join(parts) if parts else "no changes"
+                console.print(f"  Updated [cyan]{env_cfg.file}[/cyan] — {summary} ({len(final_kv)} total)")
 
         save_lock(root, lock_data)
         console.print(f"  Lock file updated: [cyan]senzu.lock[/cyan]")

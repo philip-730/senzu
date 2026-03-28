@@ -47,8 +47,14 @@ def register(app: typer.Typer) -> None:
             local_kv = read_env_file(env_path)
 
             if not local_kv:
+                if not force:
+                    err_console.print(
+                        f"[red]Error:[/red] {env_cfg.file} is empty or missing. "
+                        "Use --force to push an empty file and clear all secrets."
+                    )
+                    raise typer.Exit(1)
                 err_console.print(
-                    f"[yellow]Warning:[/yellow] {env_cfg.file} is empty or missing."
+                    f"[yellow]Warning:[/yellow] {env_cfg.file} is empty or missing. Pushing empty secret."
                 )
 
             console.print(f"\nPushing [bold]{env_name}[/bold]  [dim]({env_cfg.project})[/dim]")
