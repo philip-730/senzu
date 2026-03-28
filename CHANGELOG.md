@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/philip-730/senzu/compare/v0.2.0...v0.3.0) (2026-03-28)
+
+
+### Features
+
+* **cli:** add --version / -V flag ([8e839b3](https://github.com/philip-730/senzu/commit/8e839b38ef700d1c3ee181f7a772a0ed2c6ec08f))
+* improve usability with pull breakdown, push safety, and status sync state ([5f1fa1f](https://github.com/philip-730/senzu/commit/5f1fa1f97943144796d55f70bfc5d5b3bea57ff1))
+
+
+### Bug Fixes
+
+* move project.urls after dependencies in pyproject.toml ([5199ea9](https://github.com/philip-730/senzu/commit/5199ea990d528e904b4cb1bfcb8362025fe2fab2))
+
+
+### Documentation
+
+* add GitHub badges to README ([a4d5b9e](https://github.com/philip-730/senzu/commit/a4d5b9e4577a737a4ad15221602915735eea4d2c))
+* **readme:** update install section for PyPI ([55a6de8](https://github.com/philip-730/senzu/commit/55a6de8e8264d1eea82d718c74d83d18b9db15be))
+
 ## [0.2.0](https://github.com/philip-730/senzu/compare/v0.1.0...v0.2.0) (2026-03-26)
 
 
