@@ -63,6 +63,17 @@ def parse_secret(
         for key, val in data.items():
             if isinstance(val, (dict, list)):
                 result[key] = "'" + json.dumps(val, separators=(",", ":")) + "'"
+            elif isinstance(val, str):
+                # If the string is itself a JSON object/array, single-quote it so
+                # it round-trips correctly through .env files (dotenv strips outer quotes).
+                try:
+                    inner = json.loads(val)
+                    if isinstance(inner, (dict, list)):
+                        result[key] = "'" + json.dumps(inner, separators=(",", ":")) + "'"
+                        continue
+                except json.JSONDecodeError:
+                    pass
+                result[key] = val
             else:
                 result[key] = str(val)
         return result
@@ -75,7 +86,8 @@ def parse_secret(
 def serialize_secret(kv: dict[str, str], fmt: SecretFormat) -> bytes:
     """Serialize a flat {KEY: value} dict back to bytes for Secret Manager."""
     if fmt == "json":
-        # Deserialize single-quoted JSON strings back to objects
+        # Deserialize single-quoted JSON strings back to objects.
+        # Also handle bare JSON object/array strings (dotenv strips single quotes on read).
         out: dict = {}
         for key, val in kv.items():
             if val.startswith("'") and val.endswith("'"):
@@ -85,6 +97,14 @@ def serialize_secret(kv: dict[str, str], fmt: SecretFormat) -> bytes:
                     continue
                 except json.JSONDecodeError:
                     pass
+            # Bare JSON object/array string (single quotes were stripped by dotenv)
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, (dict, list)):
+                    out[key] = parsed
+                    continue
+            except json.JSONDecodeError:
+                pass
             out[key] = val
         return json.dumps(out, indent=2).encode()
 
