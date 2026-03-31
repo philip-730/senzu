@@ -88,7 +88,7 @@ def register(app: typer.Typer) -> None:
 
             # Confirmation prompt
             if not force:
-                console.print(f"\nPush to [bold]{env_name}[/bold]? A new secret version will be created. [y/N] ", end="")
+                console.print(f"\nPush to [bold]{env_name}[/bold]? A new secret version will be created. \\[y/N] ", end="")
                 answer = input().strip().lower()
                 if answer != "y":
                     console.print("Aborted.")

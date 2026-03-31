@@ -189,7 +189,7 @@ def register(app: typer.Typer) -> None:
 
         if not force:
             secrets_list = ", ".join(f"[cyan]{n}[/cyan]" for n in groups)
-            console.print(f"\nThis will create new version(s) of {secrets_list}. Proceed? [y/N] ", end="")
+            console.print(f"\nThis will create new version(s) of {secrets_list}. Proceed? \\[y/N] ", end="")
             answer = input().strip().lower()
             if answer != "y":
                 console.print("Aborted.")
