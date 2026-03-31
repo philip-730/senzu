@@ -63,6 +63,24 @@ def register(app: typer.Typer) -> None:
 
             if not overwrite and not is_first_pull:
                 local_only = {k: v for k, v in local_kv.items() if k not in merged}
+                would_overwrite = {
+                    k: (local_kv[k], merged[k])
+                    for k in local_kv
+                    if k in merged and local_kv[k] != merged[k]
+                }
+
+                if would_overwrite:
+                    console.print(
+                        f"  [yellow]Warning:[/yellow] {len(would_overwrite)} local change(s) will be overwritten by remote:"
+                    )
+                    for k in sorted(would_overwrite):
+                        console.print(f"    [yellow]{k}[/yellow]  (local → remote)")
+                    console.print("  Proceed and overwrite these local changes? [y/N] ", end="")
+                    answer = input().strip().lower()
+                    if answer != "y":
+                        console.print("  Aborted.")
+                        raise typer.Exit(0)
+
                 if local_only:
                     console.print(
                         f"  [yellow]Kept {len(local_only)} local-only key(s) not in remote:[/yellow] "
