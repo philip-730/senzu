@@ -75,7 +75,7 @@ def register(app: typer.Typer) -> None:
                     )
                     for k in sorted(would_overwrite):
                         console.print(f"    [yellow]{k}[/yellow]  (local → remote)")
-                    console.print("  Proceed and overwrite these local changes? [y/N] ", end="")
+                    console.print("  Proceed and overwrite these local changes? \\[y/N] ", end="")
                     answer = input().strip().lower()
                     if answer != "y":
                         console.print("  Aborted.")
