@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "senzu"
-version = "0.3.0"
+version = "0.3.1"
 description = "Secret env sync for GCP teams"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/philip-730/senzu/compare/v0.3.0...v0.3.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* escape [y/N] prompt so Rich doesn't swallow the brackets ([4a98a86](https://github.com/philip-730/senzu/commit/4a98a86a51c605570970237eed1d77ffa8e55232))
+* improve UX for auth errors, pull overwrites, and JSON round-trip ([93c32cf](https://github.com/philip-730/senzu/commit/93c32cf18f15c3ccf152d0cf1f2c72a3f326170d))
+
 ## [0.3.0](https://github.com/philip-730/senzu/compare/v0.2.0...v0.3.0) (2026-03-28)
 
 
